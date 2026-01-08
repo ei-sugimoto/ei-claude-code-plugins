@@ -58,19 +58,54 @@ Git worktreeを使った並行開発を支援します。
 
 ## インストール
 
-### 方法1: プラグインディレクトリへのインストール
+### 方法1: マーケットプレイスとして登録（推奨）
+
+Claude Code内で以下のコマンドを実行：
 
 ```bash
-# グローバルプラグインとして
-cp -r ei-claude-code-plugins ~/.claude/plugins/
+# ローカルディレクトリをマーケットプレイスとして追加
+/plugin marketplace add directory:/home/ei/works/ei-claude-code-plugins --name ei-plugins
 
-# または claude --plugin-dir オプションで指定
-claude --plugin-dir /path/to/ei-claude-code-plugins
+# プラグインをインストール
+/plugin install ei-claude-code-plugins@ei-plugins
+
+# インストール確認
+/plugin list
 ```
 
-### 方法2: プロジェクトローカル
+または、`.claude/settings.json`（グローバル）か `.claude/settings.local.json`（プロジェクト）に直接記述：
 
-プロジェクトの`.claude-plugin/`ディレクトリにコピー
+```json
+{
+  "extraKnownMarketplaces": {
+    "ei-plugins": {
+      "source": {
+        "source": "directory",
+        "path": "/home/ei/works/ei-claude-code-plugins"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "ei-claude-code-plugins@ei-plugins": true
+  }
+}
+```
+
+### 方法2: --plugin-dir オプション（開発・テスト向け）
+
+```bash
+claude --plugin-dir /home/ei/works/ei-claude-code-plugins
+```
+
+### 方法3: プロジェクトローカル
+
+プロジェクトの`.claude-plugin/`ディレクトリにコピー：
+
+```bash
+cp -r /home/ei/works/ei-claude-code-plugins/.claude-plugin /path/to/project/
+cp -r /home/ei/works/ei-claude-code-plugins/skills /path/to/project/
+cp -r /home/ei/works/ei-claude-code-plugins/agents /path/to/project/
+```
 
 ## 前提条件
 
