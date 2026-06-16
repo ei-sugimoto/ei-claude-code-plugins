@@ -1,0 +1,13 @@
+{
+  "name": "ei-plugins",
+  "owner": {
+    "name": "ei"
+  },
+  "plugins": [
+    {
+      "name": "ei-claude-code-plugins",
+      "source": "./",
+      "description": "開発ワークフロー支援プラグイン - worktree管理、cmux操作、difit差分レビュー"
+    }
+  ]
+}

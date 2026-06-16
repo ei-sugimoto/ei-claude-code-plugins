@@ -72,13 +72,13 @@ Git worktreeを使った並行開発を支援します。
 
 ## インストール
 
-### 方法1: マーケットプレイスとして登録（推奨）
+### 方法1: GitHubマーケットプレイスとして登録（推奨）
 
-Claude Code内で以下のコマンドを実行：
+このリポジトリは `.claude-plugin/marketplace.json` を持つため、GitHubリポジトリを直接マーケットプレイスとして追加できる。
 
 ```bash
-# ローカルディレクトリをマーケットプレイスとして追加
-/plugin marketplace add directory:/home/ei/works/ei-claude-code-plugins --name ei-plugins
+# GitHubリポジトリをマーケットプレイスとして追加
+/plugin marketplace add ei-sugimoto/ei-claude-code-plugins
 
 # プラグインをインストール
 /plugin install ei-claude-code-plugins@ei-plugins
@@ -94,8 +94,8 @@ Claude Code内で以下のコマンドを実行：
   "extraKnownMarketplaces": {
     "ei-plugins": {
       "source": {
-        "source": "directory",
-        "path": "/home/ei/works/ei-claude-code-plugins"
+        "source": "github",
+        "repo": "ei-sugimoto/ei-claude-code-plugins"
       }
     }
   },
@@ -105,20 +105,17 @@ Claude Code内で以下のコマンドを実行：
 }
 ```
 
-### 方法2: --plugin-dir オプション（開発・テスト向け）
+### 方法2: ローカルディレクトリをマーケットプレイスに追加（開発向け）
 
 ```bash
-claude --plugin-dir /home/ei/works/ei-claude-code-plugins
+/plugin marketplace add /Users/ei.sugimoto/works/github.com/ei-sugimoto/ei-claude-code-plugins
+/plugin install ei-claude-code-plugins@ei-plugins
 ```
 
-### 方法3: プロジェクトローカル
-
-プロジェクトの`.claude-plugin/`ディレクトリにコピー：
+### 方法3: --plugin-dir オプション（その場限りの読み込み）
 
 ```bash
-cp -r /home/ei/works/ei-claude-code-plugins/.claude-plugin /path/to/project/
-cp -r /home/ei/works/ei-claude-code-plugins/skills /path/to/project/
-cp -r /home/ei/works/ei-claude-code-plugins/agents /path/to/project/
+claude --plugin-dir /Users/ei.sugimoto/works/github.com/ei-sugimoto/ei-claude-code-plugins
 ```
 
 ## 前提条件

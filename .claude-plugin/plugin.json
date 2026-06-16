@@ -1,9 +1,9 @@
 {
   "name": "ei-claude-code-plugins",
-  "version": "0.1.0",
-  "description": "開発ワークフロー支援プラグイン - worktree管理、テスト実行、コードレビューの自動化",
+  "version": "0.2.0",
+  "description": "開発ワークフロー支援プラグイン - worktree管理、cmux操作、difit差分レビュー",
   "author": {
     "name": "ei"
   },
-  "keywords": ["workflow", "worktree", "wtp", "testing", "code-review"]
+  "keywords": ["workflow", "worktree", "wtp", "cmux", "difit", "code-review"]
 }
