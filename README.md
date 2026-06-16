@@ -17,6 +17,20 @@
 
 **トリガー例**: 「wtp」「worktree」「別のブランチで作業」「並行開発」
 
+#### run-cmux (cmux操作支援)
+- cmux (macOSターミナルマルチプレクサ) の操作・調査ガイド
+- ウィンドウ/ワークスペース/ペイン/サーフェスのトポロジ、フォーカス・移動
+- ターミナルへのキー送信、ブラウザサーフェスのスクリーンショット、フック連携、`cmux.json` 編集
+
+**トリガー例**: 「cmux起動して」「cmuxのワークスペース一覧」「cmuxにキー送って」「cmuxのブラウザをスクショ」
+
+#### difit-review (difit差分レビュー連携)
+- difit (ローカルGit差分レビューツール) を cmux のサーフェスで起動
+- ブラウザサーフェスを閉じるだけでコメントを自動回収し、各指摘に沿ってコードを修正
+- 手動の「Copy All Prompt」コピペが不要
+
+**トリガー例**: 「difitでレビュー」「difit立ち上げて」「difitのコメント反映して」
+
 ### エージェント
 
 #### worktree-manager (Worktree管理)
@@ -111,6 +125,8 @@ cp -r /home/ei/works/ei-claude-code-plugins/agents /path/to/project/
 
 - Claude Code CLI
 - wtp (worktree機能を使用する場合): https://github.com/satococoa/wtp
+- cmux (run-cmux / difit-review を使用する場合): macOS専用のターミナルマルチプレクサ。`brew install --cask cmux`
+- difit (difit-review を使用する場合): https://github.com/yoshiko-pg/difit
 - Git
 
 ## ライセンス
