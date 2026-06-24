@@ -10,13 +10,6 @@
 
 ### スキル
 
-#### wtp (Git Worktree操作支援)
-- wtpコマンドの使い方ガイド
-- worktreeを使った並行開発のベストプラクティス
-- よくある問題のトラブルシューティング
-
-**トリガー例**: 「wtp」「worktree」「別のブランチで作業」「並行開発」
-
 #### run-cmux (cmux操作支援)
 - cmux (macOSターミナルマルチプレクサ) の操作・調査ガイド
 - ウィンドウ/ワークスペース/ペイン/サーフェスのトポロジ、フォーカス・移動
@@ -121,7 +114,6 @@ claude --plugin-dir /Users/ei.sugimoto/works/github.com/ei-sugimoto/ei-claude-co
 ## 前提条件
 
 - Claude Code CLI
-- wtp (worktree機能を使用する場合): https://github.com/satococoa/wtp
 - cmux (run-cmux / difit-review を使用する場合): macOS専用のターミナルマルチプレクサ。`brew install --cask cmux`
 - difit (difit-review を使用する場合): https://github.com/yoshiko-pg/difit
 - Git
