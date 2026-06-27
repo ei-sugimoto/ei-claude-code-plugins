@@ -1,6 +1,6 @@
 {
   "name": "ei-claude-code-plugins",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "開発ワークフロー支援プラグイン - cmux操作、difit差分レビュー",
   "author": {
     "name": "ei"
