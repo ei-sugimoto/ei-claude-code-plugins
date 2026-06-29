@@ -7,7 +7,7 @@
     {
       "name": "ei-claude-code-plugins",
       "source": "./",
-      "description": "開発ワークフロー支援プラグイン - cmux操作、difit差分レビュー"
+      "description": "開発ワークフロー支援プラグイン - worktree整理、cmux操作、difit差分レビュー"
     }
   ]
 }
