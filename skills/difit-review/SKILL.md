@@ -97,21 +97,6 @@ BSURF=$(echo "$BOUT" | grep -o 'surface:[0-9]*' | head -1)
 
 ユーザーに**「開いた cmux のブラウザサーフェスでレビューしてコメントを付け終わったら、そのサーフェスを閉じてください。閉じたら自動で回収して修正します」と伝える**。
 
-## Step 3.6: cmux WKWebView 描画バグの回避 CSS を注入（必須）
-
-cmux のブラウザサーフェス(WKWebView)には、**absolute 配置の疑似要素オーバーレイの背景色がスクロールコンテンツ全体ににじむ描画バグ**がある（cmux 0.64.17 / macOS 26.5 で実測確認）。difit はコメント対象行のハイライトを `after:absolute` 疑似要素 + `--color-diff-selected-bg` で描くため、素のままだと**コメントフォームを開いた瞬間に画面全体が白フラッシュし、その後全体が茶色っぽく変色**する（Unified で顕著。フォームを Cancel すると戻る）。
-
-ブラウザサーフェスを開いてページが読み込まれたら（`sleep 2` 程度待つ）、疑似要素側を透明化し、行本体へ直接「不透明の」ハイライト色を付ける CSS を注入して回避する。見た目は元とほぼ同一のまま症状だけ消える:
-
-```bash
-sleep 2
-cmux browser --surface "$BSURF" eval 'const st=document.createElement("style"); st.id="cmux-difit-fix"; st.textContent=":root{--color-diff-selected-bg:transparent;} [class*=\"after:bg-diff-selected-bg\"]{background-color:color-mix(in srgb,#ae7c14 15%,var(--color-github-bg-primary));}"; document.head.appendChild(st); "injected"'
-```
-
-- `#ae7c14` + 15% は difit 既定の `--color-diff-selected-bg: #ae7c1426` と同じ見え方になる不透明合成。`var(--color-github-bg-primary)` 参照なのでテーマにも追従する
-- **色を変えるだけでは直らない**（不透明色にしてもその色が全画面ににじむ。透明化 + 行本体への直接背景の組み合わせが必要）
-- ページをリロードすると注入が消えるため、Step 4 の監視ループで再注入する
-
 ## Step 4: サーフェスを background で監視（コメントが流れるのを待つ）
 
 difit サーフェスを **`Bash` の `run_in_background: true`** でポーリングし、ブラウザ切断時の出力ブロックが現れたら本文を出力して終了させる。終了時にハーネスが通知してくれるので、ユーザーのレビュー中もこちらは待てる。`SURF` は Step 2 で取得した値に置き換えて起動すること:
@@ -122,8 +107,6 @@ SURF=surface:NN
 BSURF=surface:MM
 DEADLINE=$((SECONDS+1800))     # 最大30分待つ。必要なら調整
 while [ $SECONDS -lt $DEADLINE ]; do
-  # Step 3.6 の回避CSSがリロード等で消えていたら再注入（閉鎖済みサーフェスへのエラーは無視）
-  cmux browser --surface "$BSURF" eval 'if(!document.getElementById("cmux-difit-fix")){const st=document.createElement("style");st.id="cmux-difit-fix";st.textContent=":root{--color-diff-selected-bg:transparent;} [class*=\"after:bg-diff-selected-bg\"]{background-color:color-mix(in srgb,#ae7c14 15%,var(--color-github-bg-primary));}";document.head.appendChild(st)} "ok"' >/dev/null 2>&1 || true
   S=$(cmux read-screen --surface "$SURF" --scrollback --lines 300 2>/dev/null)
   # コメントが1件以上 → ブロックをそのまま出力して終了
   if printf '%s' "$S" | grep -q "Comments from review session:"; then
@@ -223,9 +206,9 @@ cmux close-surface --surface "$SURF"
 - **背景監視の sleep**: ポーリングの `sleep` は `run_in_background: true`（バックグラウンド実行）の中でのみ使う。フォアグラウンドでは sleep は不可
 - **API エンドポイントがバージョンで変わる**: 代替の `/api/comments-output` / `/api/comments-json` は README 未記載の実装ベースの仕様（difit 5.0.2 で疎通確認済み）。将来 404 になったらブラウザ切断の stdout 方式に寄せる
 - **cmux のハンドルは不安定**: `surface:20` 等のインデックスは reorder/close でずれる。このskillは起動直後に取得した ref を一連の流れで使い切るので通常は問題ないが、途中でユーザーがサーフェスを操作した場合は `cmux tree` で取り直す
-- **画面が白フラッシュ→茶色っぽく変色する**: Step 3.6 の回避 CSS が入っていない（またはリロードで消えた）症状。cmux WKWebView の合成バグで、difit の選択行ハイライト（`after:absolute` 疑似要素の背景色）が画面全体ににじむ。ページ側の DOM/CSS は正常なので difit や差分内容を疑わない。再注入すれば直る（フォームを Cancel して開き直すと即反映）
 - **差分が空**: difit を起動しても見るものが無い。対象を変えるかユーザーに確認
 - **ブラウザサーフェスの起動に失敗**: `cmux new-surface --type browser` が失敗・ref を取れなかった場合は、Step 3 で取得した URL をユーザーに渡して手動で開いてもらう（OS ブラウザでも cmux の `cmux browser open` でも可）。`--no-open` で起動しているため、何かで開かない限り UI は表示されない
+- **画面が白フラッシュ→茶色っぽく変色する**: cmux WKWebView の合成バグで、difit の選択行ハイライト（`after:absolute` 疑似要素の背景色）が画面全体ににじむことがある（cmux 0.64.17 / macOS 26.5 で実測確認）。ページ側の DOM/CSS は正常なので difit や差分内容を疑わない。フォームを Cancel して開き直すと収まる
 
 ## なぜ cmux のサーフェス(タブ)で動かすのか
 
