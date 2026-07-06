@@ -1,6 +1,6 @@
 ---
 name: difit-review
-description: difit (ローカルGit差分レビューツール) を cmux のサーフェス(タブ)で起動し、UI も cmux のブラウザサーフェス(タブ)で開く。ユーザーがそのサーフェスでレビューして閉じると、そのサーフェスに流れるコメントを background 監視で自動回収して各指摘に沿ってコードを修正するまでを一気通貫で行う。手動の「Copy All Prompt」貼り付けを不要にする。Use this skill whenever the user wants to review their own changes with difit and have the comments applied — phrases like "difitでレビュー", "difit立ち上げて", "difitのコメント反映して", "difitで指摘したやつ直して", "review with difit", "difit起動してコメント取り込んで". difit と cmux の連携が意図されているとき。
+description: difit (ローカルGit差分レビューツール) を cmux のサーフェス(タブ)で起動し、UI も cmux のブラウザサーフェス(タブ)で開く。ユーザーがそのサーフェスでレビューして閉じると、そのサーフェスに流れるコメントを background 監視で自動回収して各指摘に沿ってコードを修正するまでを一気通貫で行う。手動の「Copy All Prompt」貼り付けを不要にする。レビュー中でもサーフェスを閉じずに `curl` でその時点までのコメントを随時取得できる。Use this skill whenever the user wants to review their own changes with difit and have the comments applied — phrases like "difitでレビュー", "difit立ち上げて", "difitのコメント反映して", "difitで指摘したやつ直して", "review with difit", "difit起動してコメント取り込んで", "途中のコメント見せて", "サーフェス閉じずにコメント取得して". difit と cmux の連携が意図されているとき。
 ---
 
 # difit-review (起動 → ブラウザサーフェスを閉じる → コメント自動回収 → 修正)
@@ -20,6 +20,7 @@ cmux の操作詳細は [[run-cmux]] スキル (`${CLAUDE_PLUGIN_ROOT}/skills/ru
 - **UI は OS デフォルトブラウザではなく cmux のブラウザサーフェス(タブ)で開く**（difit は `--no-open` で起動し、取得した URL を `cmux new-surface --type browser` で cmux 内の新規タブとして表示する）
 - **ペイン分割はしない**。ターミナル・ブラウザとも `cmux new-surface` で新しいサーフェス（タブ）として開く
 - **既定はブラウザ切断トリガー方式**（`--keep-alive` なし）。cmux のブラウザサーフェスを閉じた時点でサーバーは自走終了するので、回収後のサーバー停止操作は不要。残った空サーフェスのクローズだけ後始末する
+- **途中経過の取得にサーフェスを閉じる必要はない**。`/api/comments-output` はレビュー中いつでも `curl` で読める読み取り専用エンドポイントなので（詳細は Step 4）、ユーザーが「今のコメント見せて」等と言ったらそれで即応じる
 - 調査・修正プロセスは逐次ユーザーに見せる
 
 ## 前提
@@ -135,7 +136,15 @@ echo "DIFIT_MONITOR_TIMEOUT"; exit 1
 - `DIFIT_NO_COMMENTS` ならコメント無し → 修正不要。Step 6 へ
 - `DIFIT_MONITOR_TIMEOUT` なら時間切れ → ユーザーに状況を確認（まだレビュー中か、ブラウザサーフェスを閉じ忘れていないか）
 
-**ブラウザサーフェスを閉じたくない / 途中で回収したい場合の代替**: サーバー稼働中なら Step 3 で取得した `$URL` に対して `curl -fsS "$URL/api/comments-output"`（同じ整形テキスト）でいつでも取得できる。difit は既定で `localhost` にバインドして `http://localhost:<port>` を出力するので、ホストは決め打ちせず `$URL` を使う。この場合は `--clean --no-open --keep-alive` 付きで起動し、回収後に Step 6 でサーバーを停止する。
+**サーフェスを閉じずに、レビュー中いつでも今までのコメントを取得できる**: `/api/comments-output`（整形テキスト）と `/api/comments-json`（構造化JSON）は **`--keep-alive` の有無に関係なく常時有効な読み取り専用エンドポイント**（difit 5.0.2 ソース `src/server/server.ts` で確認済み。`--keep-alive` はブラウザ**切断後**にサーバーを生かし続けるかどうかにしか関わらない別設定で、閉じずに覗き見るだけなら不要）。サーバー稼働中なら Step 3 で取得した `$URL` に対して既定の起動フロー（`--keep-alive` なし）のまま:
+
+```bash
+curl -fsS "$URL/api/comments-output"
+```
+
+でその時点までの投稿済みコメントをいつでも取得できる。ユーザーから「今ついてるコメント見せて」「途中まで直しておいて」と言われたら、ブラウザサーフェスを閉じるよう頼まずにこれで応じてよい。コメント0件なら空文字が返る。difit は既定で `localhost` にバインドして `http://localhost:<port>` を出力するので、ホストは決め打ちせず `$URL` を使う。これはレビューを終わらせる操作ではないので、Step 4 の background 監視（ブラウザを閉じた時点の最終回収）と併用してよい。途中取得後もユーザーはレビューを続けられ、追加・変更されたコメントは次の取得や最終回収で反映される。
+
+**ブラウザ切断後もサーバーを生かし続けたい場合の代替**: 複数回に分けてレビューする等、切断トリガー方式そのものを使いたくない場合は `--clean --no-open --keep-alive` 付きで起動し、上記の `curl` で好きなタイミングで回収したうえで、Step 6 で明示的にサーバーを停止する。
 
 取得テキストの形式（実測）:
 ```
