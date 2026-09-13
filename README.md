@@ -24,6 +24,13 @@
 
 **トリガー例**: 「difitでレビュー」「difit立ち上げて」「difitのコメント反映して」
 
+#### write-pr-description (PR description 執筆)
+- `.github/pull_request_template.md` があればその構成に従って PR 本文を書く
+- 体言止め、1文1事柄、条件や設定は表、差分で分かることは書かない
+- 下書きを確認したうえで `gh pr create` / `gh pr edit` で作成・更新
+
+**トリガー例**: 「PR作って」「PRのdescription書いて」「このPRの説明読みにくいから直して」
+
 ### エージェント
 
 #### worktree-manager (Worktree管理)
