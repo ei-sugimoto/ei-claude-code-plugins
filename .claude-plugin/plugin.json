@@ -1,7 +1,7 @@
 {
   "name": "ei-claude-code-plugins",
-  "version": "0.5.1",
-  "description": "開発ワークフロー支援プラグイン - worktree整理、cmux操作、difit差分レビュー、PRレビューコメント取得",
+  "version": "0.6.0",
+  "description": "開発ワークフロー支援プラグイン - worktree整理、cmux操作、difit差分レビュー、PRレビューコメント取得、PR description執筆",
   "author": {
     "name": "ei"
   },
