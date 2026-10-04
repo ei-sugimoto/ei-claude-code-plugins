@@ -1,0 +1,165 @@
+import { describe, expect, test } from 'claude-code/testing'
+
+import {
+  MAX_ROWS_PER_FILE,
+  buildTree,
+  displayWidth,
+  fillWidth,
+  fitWidth,
+  formatComments,
+  nextTarget,
+  parseCommentInput,
+  parseUnifiedDiff,
+  toUnified,
+  untrackedFile,
+} from '../hooks/diff'
+
+const SAMPLE = [
+  'diff --git a/src/a.ts b/src/a.ts',
+  'index 1111111..2222222 100644',
+  '--- a/src/a.ts',
+  '+++ b/src/a.ts',
+  '@@ -1,4 +1,5 @@',
+  ' const a = 1',
+  '-const b = 2',
+  '--- not a header',
+  '+const b = 3',
+  '+const c = 4',
+  '+const d = 5',
+  ' export { a }',
+  'diff --git a/old.txt b/old.txt',
+  'deleted file mode 100644',
+  '--- a/old.txt',
+  '+++ /dev/null',
+  '@@ -1 +0,0 @@',
+  '-bye',
+  '\\ No newline at end of file',
+  'diff --git a/img.png b/img.png',
+  'Binary files a/img.png and b/img.png differ',
+  '',
+].join('\n')
+
+describe('parseUnifiedDiff', () => {
+  test('削除と追加を左右に対にする', () => {
+    const [file] = parseUnifiedDiff(SAMPLE)
+    expect(file?.path).toBe('src/a.ts')
+    expect(file?.added).toBe(3)
+    expect(file?.removed).toBe(2)
+    const rows = file?.hunks[0]?.rows ?? []
+    expect(rows.length).toBe(5)
+    expect(rows[0]).toEqual({
+      left: { kind: 'ctx', no: 1, text: 'const a = 1' },
+      right: { kind: 'ctx', no: 1, text: 'const a = 1' },
+    })
+    expect(rows[1]).toEqual({
+      left: { kind: 'del', no: 2, text: 'const b = 2' },
+      right: { kind: 'add', no: 2, text: 'const b = 3' },
+    })
+    expect(rows[2]).toEqual({
+      left: { kind: 'del', no: 3, text: '-- not a header' },
+      right: { kind: 'add', no: 3, text: 'const c = 4' },
+    })
+    expect(rows[3]).toEqual({ left: null, right: { kind: 'add', no: 4, text: 'const d = 5' } })
+    expect(rows[4]?.right?.no).toBe(5)
+  })
+
+  test('削除ファイルとバイナリを扱う', () => {
+    const files = parseUnifiedDiff(SAMPLE)
+    expect(files[1]?.path).toBe('old.txt')
+    expect(files[1]?.hunks[0]?.rows).toEqual([{ left: { kind: 'del', no: 1, text: 'bye' }, right: null }])
+    expect(files[2]?.isBinary).toBe(true)
+    expect(files[2]?.hunks).toEqual([])
+  })
+
+  test('行数の上限で切る', () => {
+    const body = Array.from({ length: MAX_ROWS_PER_FILE + 10 }, (_, i) => `+line ${i}`)
+    const text = ['diff --git a/x b/x', '--- /dev/null', '+++ b/x', `@@ -0,0 +1,${body.length} @@`, ...body].join('\n')
+    const [file] = parseUnifiedDiff(text)
+    expect(file?.isTruncated).toBe(true)
+    expect(file?.hunks[0]?.rows.length).toBe(MAX_ROWS_PER_FILE)
+    expect(file?.added).toBe(body.length)
+  })
+})
+
+test('untracked ファイルを全行追加として組む', () => {
+  const file = untrackedFile('new.md', 'a\n\tb\n')
+  expect(file.isUntracked).toBe(true)
+  expect(file.added).toBe(2)
+  expect(file.hunks[0]?.rows[1]).toEqual({ left: null, right: { kind: 'add', no: 2, text: '  b' } })
+})
+
+test('コメント入力を読む', () => {
+  expect(parseCommentInput('R12 null チェック')).toEqual({ side: 'R', start: 12, end: 12, body: 'null チェック' })
+  expect(parseCommentInput('l3  消さないで ')).toEqual({ side: 'L', start: 3, end: 3, body: '消さないで' })
+  expect(parseCommentInput('7 既定は変更後')).toEqual({ side: 'R', start: 7, end: 7, body: '既定は変更後' })
+  expect(parseCommentInput('R15-12 逆順も範囲')).toEqual({ side: 'R', start: 12, end: 15, body: '逆順も範囲' })
+  expect(parseCommentInput('本文だけ')).toBeNull()
+})
+
+test('コメントをプロンプト用に整形する', () => {
+  const text = formatComments(
+    [
+      { id: '1', path: 'src/a.ts', side: 'R', start: 2, end: 2, body: '3 ではなく 2 のはず' },
+      { id: '2', path: 'old.txt', side: 'L', start: 1, end: 3, body: '消してよいか確認' },
+    ],
+    'origin/main (merge-base abc1234)',
+  )
+  expect(text).toContain('- src/a.ts:2: 3 ではなく 2 のはず')
+  expect(text).toContain('- old.txt:1-3 (変更前): 消してよいか確認')
+})
+
+test('表示幅に合わせて切り詰める', () => {
+  expect(fitWidth('abc', 5)).toBe('abc')
+  expect(fitWidth('abcdefgh', 5)).toBe('abcd>')
+  expect(displayWidth('日本語')).toBe(6)
+  expect(fitWidth('日本語です', 6)).toBe('日本 >')
+  expect(displayWidth(fitWidth('日本語です', 6))).toBe(6)
+  expect(fillWidth('日本', 6)).toBe('日本  ')
+  expect(fillWidth('abcdefgh', 5)).toBe('abcd>')
+})
+
+test('行番号のクリックで選択が移る', () => {
+  // 1回目は起点だけ (入力欄は開かない)
+  const anchor = nextTarget(null, 'a.ts', 'R', 5)
+  expect(anchor).toEqual({ path: 'a.ts', side: 'R', start: 5, end: 5, isEditing: false })
+  // 同じ行をもう一度押すと、その1行で入力欄が開く
+  expect(nextTarget(anchor, 'a.ts', 'R', 5)).toEqual({ path: 'a.ts', side: 'R', start: 5, end: 5, isEditing: true })
+  // 同じ側の別の行なら範囲で開く (上に向かっても同じ)
+  const range = nextTarget(anchor, 'a.ts', 'R', 2)
+  expect(range).toEqual({ path: 'a.ts', side: 'R', start: 2, end: 5, isEditing: true })
+  // 入力欄が開いているときに押すと、その行を新しい起点にする
+  expect(nextTarget(range, 'a.ts', 'R', 3)).toEqual({ path: 'a.ts', side: 'R', start: 3, end: 3, isEditing: false })
+  // 別の側や別のファイルなら起点を置き直す
+  expect(nextTarget(anchor, 'a.ts', 'L', 7)).toEqual({ path: 'a.ts', side: 'L', start: 7, end: 7, isEditing: false })
+  expect(nextTarget(anchor, 'b.ts', 'R', 7)).toEqual({ path: 'b.ts', side: 'R', start: 7, end: 7, isEditing: false })
+})
+
+test('変更ファイルをディレクトリの木に並べる', () => {
+  const files = parseUnifiedDiff(
+    ['README.md', 'apps/api/src/a.ts', 'apps/api/src/b.ts', 'apps/web/c.ts']
+      .map(p => [`diff --git a/${p} b/${p}`, `--- a/${p}`, `+++ b/${p}`, '@@ -1 +1 @@', '-x', '+y'].join('\n'))
+      .join('\n'),
+  )
+  const show = (rows: ReturnType<typeof buildTree>) =>
+    rows.map(r => `${'  '.repeat(r.depth)}${r.kind === 'dir' ? r.name : r.name}`)
+  // 子が1つだけの apps/api/src は1行にまとめ、ディレクトリを先に並べる
+  expect(show(buildTree(files, []))).toEqual(['apps/', '  api/src/', '    a.ts', '    b.ts', '  web/', '    c.ts', 'README.md'])
+  // 折りたたんだディレクトリの中は出さない
+  expect(show(buildTree(files, ['apps/api/src']))).toEqual(['apps/', '  api/src/', '  web/', '    c.ts', 'README.md'])
+})
+
+test('左右の対を unified の並びに戻す', () => {
+  const [file] = parseUnifiedDiff(SAMPLE)
+  const hunk = file?.hunks[0]
+  expect(hunk).toBeDefined()
+  if (hunk === undefined) return
+  expect(toUnified(hunk).map(l => `${l.oldNo ?? '.'} ${l.newNo ?? '.'} ${l.kind}`)).toEqual([
+    '1 1 ctx',
+    '2 . del',
+    '3 . del',
+    '. 2 add',
+    '. 3 add',
+    '. 4 add',
+    '4 5 ctx',
+  ])
+})

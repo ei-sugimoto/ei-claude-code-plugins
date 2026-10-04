@@ -1,0 +1,3 @@
+# エンジンが読み込み時に書き出す型定義と tsconfig
+.claude-plugin/types/
+tsconfig.json

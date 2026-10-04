@@ -8,6 +8,11 @@
       "name": "ei-claude-code-plugins",
       "source": "./",
       "description": "開発ワークフロー支援プラグイン - worktree整理、cmux操作、difit差分レビュー"
+    },
+    {
+      "name": "diff-review",
+      "source": "./mods/diff-review",
+      "description": "git の差分をペインで見て (split / unified)、行コメントをまとめて Claude に渡す mod (early access)"
     }
   ]
 }

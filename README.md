@@ -70,6 +70,42 @@ Git worktreeを使った並行開発を支援します。
 - 「この変更をレビューして」
 - 「PRを作成する前に確認したい」
 
+### mod
+
+本体とは別のプラグインとして `mods/` に置いている。Claude Code の mod (function hooks) は early access で、API はリリースごとに変わる。
+
+#### diff-review (ペインで見る差分レビュー)
+- `/diff-review` で git の差分をペインに表示。GitHub の Changes に近い操作感
+- 左のサイドバーに変更ファイルをディレクトリ構造で表示。ディレクトリはクリックで折りたたみ
+- 表示は split (左右) と unified (1列) を切り替え。選んだ表示は次のセッションにも残る
+- 比較の基準は `branch` (origin の既定ブランチとの merge-base) と `uncommitted` (HEAD)。untracked ファイルも含む
+- 行番号を2回押すとコメント欄が開く。同じ行を2回で1行、起点のあと同じ側の別の行を押すと範囲。1回目は起点のハイライトだけ
+- 「Claude に渡す」で、コメントを `path:行: 本文` の箇条書きにしてプロンプトへ入れる (送信は Enter)
+- 開いている間はターンが終わるたびに差分を取り直す
+- ペイン幅が 80 列未満のときはサイドバーの代わりにプルダウンでファイルを選ぶ
+
+| 操作 | キー / 入力 |
+| --- | --- |
+| branch / uncommitted | `b` / `u` |
+| split / unified | `p` / `n` |
+| 更新 | `r` |
+| Claude に渡す | `s` |
+| 行指定でコメント | 下の入力欄に `R12 本文`、`L3-5 本文` (L=変更前、R=変更後) |
+| 引数 | `/diff-review branch`、`uncommitted`、`split`、`unified`、`close` |
+
+```bash
+/plugin install diff-review@ei-plugins
+# 開発中はフォルダを直接読み込む (保存するとホットリロードされる)
+claude --plugin-dir ./mods/diff-review
+```
+
+開発時の確認:
+
+```bash
+claude plugin validate mods/diff-review
+claude plugin test mods/diff-review
+```
+
 ## インストール
 
 ### 方法1: GitHubマーケットプレイスとして登録（推奨）
