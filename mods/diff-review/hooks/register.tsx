@@ -19,9 +19,14 @@ import {
   fillWidth,
   fitWidth,
   formatComments,
+  headerOf,
+  HEADER_LINES,
+  isGeneratedHeader,
+  isGeneratedPath,
   isInRange,
   lineLabel,
   nextTarget,
+  parseCheckAttr,
   parseCommentInput,
   parseUnifiedDiff,
   toUnified,
@@ -49,6 +54,8 @@ const VIEW_STORE_KEY = 'view'
 
 // 折りたたんだディレクトリのパス
 const collapsed = atom({ plugin: 'diff-review', key: 'collapsed' } as const, [])
+
+const showGenerated = atom({ plugin: 'diff-review', key: 'showGenerated' } as const, false)
 
 // これより狭いペインではサイドバーをやめ、ファイルをプルダウンで選ぶ
 const SIDEBAR_MIN_COLUMNS = 80
@@ -96,6 +103,35 @@ const loadUntracked = async ($: EngineInterface, root: string): Promise<DiffRevi
   return files
 }
 
+const readHeader = async ($: EngineInterface, root: string, path: string): Promise<string[]> => {
+  try {
+    const stat = await $.fs.stat(`${root}/${path}`)
+    if (stat.size > MAX_UNTRACKED_BYTES) return []
+    const content = await $.fs.read(`${root}/${path}`)
+    return typeof content === 'string' ? content.split('\n', HEADER_LINES) : []
+  } catch {
+    return []
+  }
+}
+
+const markGenerated = async ($: EngineInterface, root: string, files: DiffReviewFile[]): Promise<DiffReviewFile[]> => {
+  const candidates = files.filter(f => !isGeneratedPath(f.path)).map(f => f.path)
+  const attr =
+    candidates.length === 0
+      ? new Set<string>()
+      : parseCheckAttr((await $.process.run(['git', 'check-attr', '-z', 'linguist-generated', '--', ...candidates], { cwd: root })).stdout)
+  return Promise.all(
+    files.map(async f => {
+      if (isGeneratedPath(f.path) || attr.has(f.path)) return { ...f, isGenerated: true }
+      const lines = headerOf(f) ?? (f.isBinary ? [] : await readHeader($, root, f.path))
+      return { ...f, isGenerated: isGeneratedHeader(f.path, lines) }
+    }),
+  )
+}
+
+const visibleFiles = (files: readonly DiffReviewFile[], isShown: boolean): DiffReviewFile[] =>
+  isShown ? [...files] : files.filter(f => f.isGenerated !== true)
+
 const takeSnapshot = async ($: EngineInterface, current: DiffReviewMode): Promise<DiffReviewSnapshot> => {
   const top = await git($, ['rev-parse', '--show-toplevel'])
   if (top.exitCode !== 0) return { baseLabel: '-', files: [], error: 'git リポジトリの中ではありません' }
@@ -109,7 +145,7 @@ const takeSnapshot = async ($: EngineInterface, current: DiffReviewMode): Promis
   if (diff.exitCode !== 0) {
     return { baseLabel: base.label, files: [], error: firstLine(diff.stderr) || 'git diff が失敗しました' }
   }
-  const files = [...parseUnifiedDiff(diff.stdout), ...(await loadUntracked($, root))]
+  const files = await markGenerated($, root, [...parseUnifiedDiff(diff.stdout), ...(await loadUntracked($, root))])
   return {
     baseLabel: base.label,
     files,
@@ -119,18 +155,26 @@ const takeSnapshot = async ($: EngineInterface, current: DiffReviewMode): Promis
 
 let isRefreshing = false
 
+const reselect = async ($: EngineInterface, files: readonly DiffReviewFile[]) => {
+  await update($, selected, path => (path !== null && files.some(f => f.path === path) ? path : (files[0]?.path ?? null)))
+}
+
 const refresh = async ($: EngineInterface): Promise<void> => {
   if (isRefreshing) return
   isRefreshing = true
   try {
     const next = await takeSnapshot($, await read($, mode))
     await update($, snapshot, () => next)
-    await update($, selected, path =>
-      path !== null && next.files.some(f => f.path === path) ? path : (next.files[0]?.path ?? null),
-    )
+    await reselect($, visibleFiles(next.files, await read($, showGenerated)))
   } finally {
     isRefreshing = false
   }
+}
+
+const toggleGenerated = async ($: EngineInterface) => {
+  const isShown = !(await read($, showGenerated))
+  await update($, showGenerated, () => isShown)
+  await reselect($, visibleFiles((await read($, snapshot))?.files ?? [], isShown))
 }
 
 const isPaneOpen = async ($: EngineInterface): Promise<boolean> =>
@@ -148,7 +192,7 @@ export const register: Register = on => {
     await $.command.register({
       name: 'diff-review',
       description: 'git の差分をペインで開き、行コメントを Claude に渡す',
-      argumentHint: '[branch|uncommitted|split|unified|close]',
+      argumentHint: '[branch|uncommitted|split|unified|generated|close]',
     })
     const saved = await $.store.get(VIEW_STORE_KEY)
     if (saved === 'split' || saved === 'unified') await update($, view, () => saved)
@@ -165,6 +209,7 @@ export const register: Register = on => {
     }
     if (arg === 'branch' || arg === 'uncommitted') await update($, mode, () => arg)
     if (arg === 'split' || arg === 'unified') await setView($, arg)
+    if (arg === 'generated') await update($, showGenerated, isShown => !isShown)
 
     const opened = await $.ui.open({ id: PANE, title: 'diff review', focus: true, columns: WANTED_COLUMNS })
     await refresh($)
@@ -194,12 +239,15 @@ export const register: Register = on => {
     const aimed = await read($, target)
     const closedDirs = await read($, collapsed)
     const shape = await read($, view)
+    const isGeneratedShown = await read($, showGenerated)
+    const files = visibleFiles(snap?.files ?? [], isGeneratedShown)
+    const generatedCount = (snap?.files ?? []).filter(f => f.isGenerated === true).length
     const columns = Math.max(40, e.props.bodyColumns)
     const hasSidebar = columns >= SIDEBAR_MIN_COLUMNS
     const sideWidth = hasSidebar ? Math.min(44, Math.max(22, Math.floor(columns * 0.26))) : 0
     const diffWidth = hasSidebar ? columns - sideWidth - 1 : columns
     const half = Math.floor((diffWidth - 1) / 2)
-    const file = snap?.files.find(f => f.path === path) ?? null
+    const file = files.find(f => f.path === path) ?? null
 
     // 本文は範囲の最終行の下に出し、範囲内の行には印を付ける
     const byEndLine = new Map<string, DiffReviewComment[]>()
@@ -417,7 +465,8 @@ export const register: Register = on => {
             const added = ` +${row.file.added}`
             const removed = row.file.isUntracked ? ' new' : ` -${row.file.removed}`
             const mark = count > 0 ? ` *${count}` : ''
-            const nameWidth = inner - displayWidth(added + removed + mark)
+            const gen = row.file.isGenerated === true ? ' gen' : ''
+            const nameWidth = inner - displayWidth(added + removed + mark + gen)
             return (
               <Box flexDirection="row" key={`file-row-${row.path}`} backgroundColor={bg}>
                 <Button
@@ -436,6 +485,11 @@ export const register: Register = on => {
                 {count > 0 && (
                   <Text color="yellow" backgroundColor={bg}>
                     {mark}
+                  </Text>
+                )}
+                {gen !== '' && (
+                  <Text dimColor backgroundColor={bg}>
+                    {gen}
                   </Text>
                 )}
               </Box>
@@ -504,27 +558,40 @@ export const register: Register = on => {
           <Text dimColor>|</Text>
           <Button key="view-split" label="split" hotkey="p" variant={shape === 'split' ? 'primary' : undefined} onPress={() => setView($, 'split')} />
           <Button key="view-unified" label="unified" hotkey="n" variant={shape === 'unified' ? 'primary' : undefined} onPress={() => setView($, 'unified')} />
+          {generatedCount > 0 && <Text dimColor>|</Text>}
+          {generatedCount > 0 && (
+            <Button
+              key="generated"
+              label={isGeneratedShown ? `生成ファイルを隠す (${generatedCount})` : `生成ファイルを表示 (${generatedCount})`}
+              hotkey="g"
+              variant={isGeneratedShown ? 'primary' : undefined}
+              onPress={() => toggleGenerated($)}
+            />
+          )}
         </Box>
         <Text dimColor wrap="truncate-end">
           base: {snap?.baseLabel ?? '読み込み中...'}
         </Text>
         {snap?.error != null && <Text color="red">{snap.error}</Text>}
         {snap !== null && snap.files.length === 0 && snap.error === null && <Text dimColor>差分はありません</Text>}
-        {snap !== null && snap.files.length > 0 && hasSidebar && (
+        {snap !== null && snap.files.length > 0 && files.length === 0 && (
+          <Text dimColor>自動生成ファイルの差分だけです (g で表示)</Text>
+        )}
+        {files.length > 0 && hasSidebar && (
           <Box flexDirection="row" gap={1}>
-            {sidebar(snap.files)}
+            {sidebar(files)}
             {file !== null && diffColumn(file)}
           </Box>
         )}
-        {snap !== null && snap.files.length > 0 && !hasSidebar && (
+        {files.length > 0 && !hasSidebar && (
           <Box flexDirection="column">
             <Select
               key="file"
               label="file"
               value={path ?? undefined}
-              options={snap.files.map(f => ({
+              options={files.map(f => ({
                 value: f.path,
-                label: `${f.path}  +${f.added} -${f.removed}${f.isUntracked ? ' (untracked)' : ''}`,
+                label: `${f.path}  +${f.added} -${f.removed}${f.isUntracked ? ' (untracked)' : ''}${f.isGenerated === true ? ' (generated)' : ''}`,
               }))}
               onSelect={selectFile}
             />

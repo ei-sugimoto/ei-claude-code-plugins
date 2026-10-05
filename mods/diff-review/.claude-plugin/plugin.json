@@ -1,6 +1,6 @@
 {
   "name": "diff-review",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "git の差分を GitHub の Changes のようにペインで見て (split / unified)、行を選んでコメントし、まとめて Claude に渡す mod",
   "author": {
     "name": "ei"

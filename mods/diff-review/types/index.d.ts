@@ -26,6 +26,7 @@ export type DiffReviewFile = {
   isBinary: boolean
   isUntracked: boolean
   isTruncated: boolean
+  isGenerated: boolean
   hunks: DiffReviewHunk[]
 }
 
@@ -65,6 +66,7 @@ declare module 'claude-code' {
       target: DiffReviewTarget | null
       collapsed: string[]
       view: DiffReviewView
+      showGenerated: boolean
     }
   }
 }

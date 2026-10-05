@@ -83,15 +83,17 @@ Git worktreeを使った並行開発を支援します。
 - 「Claude に渡す」で、コメントを `path:行: 本文` の箇条書きにしてプロンプトへ入れる (送信は Enter)
 - 開いている間はターンが終わるたびに差分を取り直す
 - ペイン幅が 80 列未満のときはサイドバーの代わりにプルダウンでファイルを選ぶ
+- lock ファイルやコード生成物などの自動生成ファイルは既定で隠す。パス (`go.sum`、`*.pb.go`、`*.min.js`、`vendor/` 等)、先頭20行の `@generated` / `DO NOT EDIT`、`.gitattributes` の `linguist-generated` で判定し、`g` で表示を切り替える
 
 | 操作 | キー / 入力 |
 | --- | --- |
 | branch / uncommitted | `b` / `u` |
 | split / unified | `p` / `n` |
+| 自動生成ファイルの表示 / 非表示 | `g` |
 | 更新 | `r` |
 | Claude に渡す | `s` |
 | 行指定でコメント | 下の入力欄に `R12 本文`、`L3-5 本文` (L=変更前、R=変更後) |
-| 引数 | `/diff-review branch`、`uncommitted`、`split`、`unified`、`close` |
+| 引数 | `/diff-review branch`、`uncommitted`、`split`、`unified`、`generated`、`close` |
 
 ```bash
 /plugin install diff-review@ei-plugins
