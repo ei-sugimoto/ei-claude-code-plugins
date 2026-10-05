@@ -298,6 +298,18 @@ export const parseCheckAttr = (stdout: string): Set<string> => {
   return paths
 }
 
+// Select の options は 64 件までで、超えるとペイン全体が描かれない
+export const MAX_SELECT_OPTIONS = 64
+
+// 先頭から上限まで残す。選択中の値が溢れたときは最後の1件と入れ替えて残す
+export const limitOptions = <T extends { value: string }>(options: readonly T[], keep: string | null | undefined): T[] => {
+  if (options.length <= MAX_SELECT_OPTIONS) return [...options]
+  const head = options.slice(0, MAX_SELECT_OPTIONS)
+  if (keep == null || head.some(o => o.value === keep)) return head
+  const kept = options.find(o => o.value === keep)
+  return kept === undefined ? head : [...head.slice(0, -1), kept]
+}
+
 // git for-each-ref --format=%(refname) の出力を、比較元に選べるブランチ名 (main, origin/feature 等) にする
 //   origin/HEAD は既定ブランチを指すだけの別名なので除く
 export const parseBranches = (stdout: string): string[] => {

@@ -27,6 +27,7 @@ import {
   isGeneratedHeader,
   isGeneratedPath,
   isInRange,
+  limitOptions,
   lineLabel,
   nextTarget,
   parseBranches,
@@ -704,12 +705,15 @@ export const register: Register = on => {
             key="base"
             label="比較元"
             value={chosenBase ?? DEFAULT_BASE}
-            options={[
-              { value: DEFAULT_BASE, label: '既定ブランチ (origin/HEAD)' },
-              // コマンドで一覧にないものを指定したときも、選んだものが見えるように足す
-              ...(chosenBase !== null && !(snap?.branches ?? []).includes(chosenBase) ? [chosenBase] : []).map(b => ({ value: b, label: b })),
-              ...(snap?.branches ?? []).map(b => ({ value: b, label: b })),
-            ]}
+            options={limitOptions(
+              [
+                { value: DEFAULT_BASE, label: '既定ブランチ (origin/HEAD)' },
+                // コマンドで一覧にないものを指定したときも、選んだものが見えるように足す
+                ...(chosenBase !== null && !(snap?.branches ?? []).includes(chosenBase) ? [chosenBase] : []).map(b => ({ value: b, label: b })),
+                ...(snap?.branches ?? []).map(b => ({ value: b, label: b })),
+              ],
+              chosenBase ?? DEFAULT_BASE,
+            )}
             onSelect={async value => {
               await setBaseBranch($, value === DEFAULT_BASE ? null : value)
               await refresh($)
@@ -736,10 +740,13 @@ export const register: Register = on => {
               key="file"
               label="file"
               value={path ?? undefined}
-              options={files.map(f => ({
-                value: f.path,
-                label: `${f.path}  +${f.added} -${f.removed}${f.isUntracked ? ' (untracked)' : ''}${f.isGenerated === true ? ' (generated)' : ''}`,
-              }))}
+              options={limitOptions(
+                files.map(f => ({
+                  value: f.path,
+                  label: `${f.path}  +${f.added} -${f.removed}${f.isUntracked ? ' (untracked)' : ''}${f.isGenerated === true ? ' (generated)' : ''}`,
+                })),
+                path,
+              )}
               onSelect={selectFile}
             />
             {file !== null && diffColumn(file)}

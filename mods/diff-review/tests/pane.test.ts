@@ -312,3 +312,27 @@ test('branch モードで比較元のブランチを選ぶ', async ($, on) => {
   expect(await ui.find({ key: 'base' })).toBeUndefined()
   await ui.unmount()
 })
+
+test('ブランチが多くても比較元のプルダウンを描く', async ($, on) => {
+  const refs = Array.from({ length: 300 }, (_, i) => `refs/heads/topic-${i}`)
+  on('process.run', (_, e) => {
+    const args = e.argv.slice(1).join(' ')
+    if (args.startsWith('for-each-ref')) return { value: ok([...refs, ''].join('\n')) }
+    if (args === 'rev-parse --verify --quiet topic-250') return { value: ok('def\n') }
+    if (args === 'merge-base HEAD topic-250') return { value: ok('fea7777000\n') }
+    return { value: fakeGit(e.argv) }
+  })
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  await $.command.run({
+    command: 'diff-review',
+    args: 'base topic-250',
+    origin: { kind: 'composer' },
+    presentation: { isFullscreen: true, columns: 200 },
+  })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const options = ((await ui.find({ key: 'base' }))?.props.options ?? []) as { value: string }[]
+  expect(options).toHaveLength(64)
+  expect(options.map(o => o.value)).toContain('topic-250')
+  expect(await ui.find({ type: 'Text', text: /base: topic-250/ })).toBeDefined()
+  await ui.unmount()
+})

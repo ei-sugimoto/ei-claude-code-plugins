@@ -2,6 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import {
   MAX_ROWS_PER_FILE,
+  MAX_SELECT_OPTIONS,
   buildTree,
   displayWidth,
   gapsOf,
@@ -12,6 +13,7 @@ import {
   headerOf,
   isGeneratedHeader,
   isGeneratedPath,
+  limitOptions,
   nextTarget,
   parseBranches,
   parseCheckAttr,
@@ -269,4 +271,14 @@ test('行数0の側をもつ hunk の範囲', () => {
 test('比較元に選べるブランチを並べる', () => {
   const stdout = ['refs/heads/main', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/feature/x', 'refs/remotes/upstream/main', 'refs/heads/main', ''].join('\n')
   expect(parseBranches(stdout)).toEqual(['main', 'origin/feature/x', 'upstream/main'])
+})
+
+test('Select の選択肢を上限までに絞り、選択中の値は残す', () => {
+  const options = Array.from({ length: 100 }, (_, i) => ({ value: `b${i}` }))
+  expect(limitOptions(options.slice(0, 3), 'b1')).toEqual(options.slice(0, 3))
+  expect(limitOptions(options, 'b0')).toEqual(options.slice(0, MAX_SELECT_OPTIONS))
+  const kept = limitOptions(options, 'b90')
+  expect(kept).toHaveLength(MAX_SELECT_OPTIONS)
+  expect(kept.at(-1)).toEqual({ value: 'b90' })
+  expect(limitOptions(options, 'missing')).toEqual(options.slice(0, MAX_SELECT_OPTIONS))
 })
