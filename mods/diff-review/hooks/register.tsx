@@ -38,7 +38,18 @@ const MAX_UNTRACKED = 30
 const MAX_UNTRACKED_BYTES = 200_000
 const GUTTER = 5
 // 選択中の行の背景。赤や緑の文字が読める暗めの青
-const SELECTED_BG = '#1d3b5c'
+const SELECTED_BG = '#302714'
+const CURRENT_FILE_BG = '#262c36'
+const DIFF_BG = {
+  add: { line: '#12261e', num: '#1c4428' },
+  del: { line: '#25171c', num: '#542426' },
+} as const
+const HUNK_BG = '#121d2f'
+const HUNK_NUM_BG = '#0c2d6b'
+const EMPTY_BG = '#151b23'
+const CANVAS_BG = '#0d1117'
+const FG = '#f0f6fc'
+const MUTED = '#9198a1'
 
 const mode = atom({ plugin: 'diff-review', key: 'mode' } as const, 'branch')
 const snapshot = atom({ plugin: 'diff-review', key: 'snapshot' } as const, null)
@@ -274,29 +285,32 @@ export const register: Register = on => {
     const cell = (path: string, side: DiffReviewSide, value: DiffReviewCell | null) => {
       if (value === null) {
         return (
-          <Box width={half}>
-            <Text dimColor>{' '.repeat(GUTTER)}</Text>
+          <Box width={half} backgroundColor={EMPTY_BG}>
+            <Text backgroundColor={EMPTY_BG}>{' '.repeat(half)}</Text>
           </Box>
         )
       }
       const isTarget = isInRange(aimed, path, side, value.no)
       const hasNote = noted.has(commentKey(path, side, value.no))
-      const color = value.kind === 'add' ? 'green' : value.kind === 'del' ? 'red' : undefined
+      const tone = value.kind === 'ctx' ? undefined : DIFF_BG[value.kind]
       const sign = value.kind === 'add' ? '+' : value.kind === 'del' ? '-' : ' '
-      const bg = isTarget ? SELECTED_BG : undefined
+      const bg = isTarget ? SELECTED_BG : (tone?.line ?? CANVAS_BG)
+      const numBg = isTarget ? SELECTED_BG : (tone?.num ?? CANVAS_BG)
       return (
         <Box width={half} flexDirection="row" backgroundColor={bg}>
-          <Button
-            key={`ln-${side}-${value.no}`}
-            label={String(value.no).padStart(GUTTER - 1)}
-            plain
-            dimColor={!isTarget && !hasNote}
-            onPress={() => aim(path, side, value.no)}
-          />
-          <Text color={isTarget ? 'cyan' : 'yellow'} backgroundColor={bg} bold={isTarget}>
+          <Box backgroundColor={numBg}>
+            <Button
+              key={`ln-${side}-${value.no}`}
+              label={String(value.no).padStart(GUTTER - 1)}
+              plain
+              dimColor={tone === undefined && !isTarget && !hasNote}
+              onPress={() => aim(path, side, value.no)}
+            />
+          </Box>
+          <Text color={isTarget ? 'cyan' : 'yellow'} backgroundColor={numBg} bold={isTarget}>
             {isTarget ? '>' : hasNote ? '*' : ' '}
           </Text>
-          <Text color={color} backgroundColor={bg} bold={isTarget} wrap="truncate-end">
+          <Text color={FG} backgroundColor={bg} bold={isTarget} wrap="truncate-end">
             {fillWidth(`${sign}${value.text}`, half - GUTTER)}
           </Text>
         </Box>
@@ -348,17 +362,19 @@ export const register: Register = on => {
     }
 
     // unified は変更前と変更後の行番号を2列並べ、どちらを押してもその側の行を選ぶ
-    const lineNumber = (path: string, side: DiffReviewSide, no: number | null, isLit: boolean) =>
+    const lineNumber = (path: string, side: DiffReviewSide, no: number | null, isLit: boolean, numBg: string | undefined) =>
       no === null ? (
-        <Text>{' '.repeat(GUTTER - 1)}</Text>
+        <Text backgroundColor={numBg}>{' '.repeat(GUTTER - 1)}</Text>
       ) : (
-        <Button
-          key={`ln-${side}-${no}`}
-          label={String(no).padStart(GUTTER - 1)}
-          plain
-          dimColor={!isLit}
-          onPress={() => aim(path, side, no)}
-        />
+        <Box backgroundColor={numBg}>
+          <Button
+            key={`ln-${side}-${no}`}
+            label={String(no).padStart(GUTTER - 1)}
+            plain
+            dimColor={!isLit}
+            onPress={() => aim(path, side, no)}
+          />
+        </Box>
       )
 
     const unifiedRows = (shown: DiffReviewFile, hunk: DiffReviewHunk, hunkIndex: number) =>
@@ -369,18 +385,20 @@ export const register: Register = on => {
         const hasNote =
           (line.oldNo !== null && noted.has(commentKey(shown.path, 'L', line.oldNo))) ||
           (line.newNo !== null && noted.has(commentKey(shown.path, 'R', line.newNo)))
-        const bg = isTarget ? SELECTED_BG : undefined
-        const color = line.kind === 'add' ? 'green' : line.kind === 'del' ? 'red' : undefined
+        const tone = line.kind === 'ctx' ? undefined : DIFF_BG[line.kind]
+        const bg = isTarget ? SELECTED_BG : (tone?.line ?? CANVAS_BG)
+        const numBg = isTarget ? SELECTED_BG : (tone?.num ?? CANVAS_BG)
+        const isLit = tone !== undefined || isTarget || hasNote
         const sign = line.kind === 'add' ? '+' : line.kind === 'del' ? '-' : ' '
         return [
           <Box flexDirection="row" key={`uni-${hunkIndex}-${i}`} backgroundColor={bg}>
-            {lineNumber(shown.path, 'L', line.oldNo, isTarget || hasNote)}
-            <Text backgroundColor={bg}> </Text>
-            {lineNumber(shown.path, 'R', line.newNo, isTarget || hasNote)}
-            <Text color={isTarget ? 'cyan' : 'yellow'} backgroundColor={bg} bold={isTarget}>
+            {lineNumber(shown.path, 'L', line.oldNo, isLit, numBg)}
+            <Text backgroundColor={numBg}> </Text>
+            {lineNumber(shown.path, 'R', line.newNo, isLit, numBg)}
+            <Text color={isTarget ? 'cyan' : 'yellow'} backgroundColor={numBg} bold={isTarget}>
               {isTarget ? '>' : hasNote ? '*' : ' '}
             </Text>
-            <Text color={color} backgroundColor={bg} bold={isTarget} wrap="truncate-end">
+            <Text color={FG} backgroundColor={bg} bold={isTarget} wrap="truncate-end">
               {fillWidth(`${sign}${line.text}`, diffWidth - (GUTTER - 1) * 2 - 2)}
             </Text>
           </Box>,
@@ -394,15 +412,18 @@ export const register: Register = on => {
       return (
         <Box flexDirection="column">
           {shown.hunks.flatMap((hunk, hunkIndex) => [
-            <Text color="cyan" dimColor>
-              {fitWidth(hunk.header, diffWidth)}
-            </Text>,
+            <Box flexDirection="row" key={`hunk-${hunkIndex}`} backgroundColor={HUNK_BG}>
+              <Text backgroundColor={HUNK_NUM_BG}>{' '.repeat(GUTTER)}</Text>
+              <Text color={MUTED} backgroundColor={HUNK_BG}>
+                {fillWidth(` ${hunk.header}`, diffWidth - GUTTER)}
+              </Text>
+            </Box>,
             ...(shape === 'unified' ? unifiedRows(shown, hunk, hunkIndex) : []),
             ...(shape === 'unified' ? [] : hunk.rows).flatMap((row, r) => {
               return [
                 <Box flexDirection="row" key={`row-${hunkIndex}-${r}`}>
                   {cell(shown.path, 'L', row.left)}
-                  <Text dimColor>│</Text>
+                  <Text color={MUTED} backgroundColor={CANVAS_BG}>│</Text>
                   {cell(shown.path, 'R', row.right)}
                 </Box>,
                 ...under(shown.path, row.left?.no ?? null, row.right?.no ?? null),
@@ -460,7 +481,7 @@ export const register: Register = on => {
               )
             }
             const isCurrent = row.path === path
-            const bg = isCurrent ? SELECTED_BG : undefined
+            const bg = isCurrent ? CURRENT_FILE_BG : undefined
             const count = noteCount.get(row.path) ?? 0
             const added = ` +${row.file.added}`
             const removed = row.file.isUntracked ? ' new' : ` -${row.file.removed}`

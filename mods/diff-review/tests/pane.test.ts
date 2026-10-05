@@ -95,7 +95,7 @@ test('差分を左右に描き、コメントを足してプロンプトへ渡�
     await ui.press({ key: 'ln-R-2' })
     expect(await ui.find({ type: 'Text', text: /src\/a.ts:1-2 \(変更後\) にコメント/ })).toBeDefined()
     // 選択中の2行だけ背景色が付く
-    const lit = (await ui.findAll({ type: 'Text' })).filter(t => t.props.backgroundColor !== undefined && /const/.test(t.text ?? ''))
+    const lit = (await ui.findAll({ type: 'Text' })).filter(t => t.props.backgroundColor === '#302714' && /const/.test(t.text ?? ''))
     expect(lit.map(t => t.text?.trim())).toEqual(['const a = 1', '+const b = 3'])
     await ui.input({ key: 'inline-comment', text: '3 ではなく 2 のはず' })
     expect(await ui.find({ key: 'inline-comment' })).toBeUndefined()
