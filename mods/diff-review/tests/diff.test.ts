@@ -4,6 +4,8 @@ import {
   MAX_ROWS_PER_FILE,
   buildTree,
   displayWidth,
+  gapsOf,
+  hunkSpan,
   fillWidth,
   fitWidth,
   formatComments,
@@ -11,9 +13,11 @@ import {
   isGeneratedHeader,
   isGeneratedPath,
   nextTarget,
+  parseBranches,
   parseCheckAttr,
   parseCommentInput,
   parseUnifiedDiff,
+  revealGap,
   toUnified,
   untrackedFile,
 } from '../hooks/diff'
@@ -205,4 +209,64 @@ test('git check-attr の出力を読む', () => {
   const out = ['api/schema.ts', 'linguist-generated', 'true', 'src/a.ts', 'linguist-generated', 'unspecified', 'gen/b.ts', 'linguist-generated', 'set', ''].join('\u0000')
   expect([...parseCheckAttr(out)]).toEqual(['api/schema.ts', 'gen/b.ts'])
   expect(parseCheckAttr('').size).toBe(0)
+})
+
+// 30行のファイルの 10 行目と 25 行目を変えた差分
+const GAP_SOURCE = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`)
+const GAP_DIFF = [
+  'diff --git a/g.txt b/g.txt',
+  '--- a/g.txt',
+  '+++ b/g.txt',
+  '@@ -7,7 +7,8 @@',
+  ...GAP_SOURCE.slice(6, 9).map(l => ` ${l}`),
+  '-old 10',
+  '+line 10',
+  '+inserted',
+  ...GAP_SOURCE.slice(10, 13).map(l => ` ${l}`),
+  '@@ -22,7 +23,7 @@',
+  ...GAP_SOURCE.slice(22, 25).map(l => ` ${l}`),
+  '-old 25',
+  '+line 26',
+  ...GAP_SOURCE.slice(26, 29).map(l => ` ${l}`),
+].join('\n')
+
+test('hunk の間に隠れた行の範囲を求める', () => {
+  const [parsed] = parseUnifiedDiff(GAP_DIFF)
+  if (parsed === undefined) throw new Error('no file')
+  // 変更後は10行目の後に1行増えている
+  const source = [...GAP_SOURCE.slice(0, 10), 'inserted', ...GAP_SOURCE.slice(10)]
+  const file = { ...parsed, source }
+  expect(hunkSpan(file.hunks[0]!)).toEqual({ oldStart: 7, oldEnd: 13, newStart: 7, newEnd: 14 })
+  expect(gapsOf(file)).toEqual([
+    { index: 0, newStart: 1, newEnd: 6, delta: 0 },
+    { index: 1, newStart: 15, newEnd: 22, delta: -1 },
+    { index: 2, newStart: 30, newEnd: 31, delta: -1 },
+  ])
+  // 中身が読めないファイルや途中で省略したファイルの末尾は展開しない
+  expect(gapsOf({ ...file, source: null })).toEqual([])
+  expect(gapsOf({ ...file, isTruncated: true }).map(g => g.index)).toEqual([0, 1])
+
+  const gap = gapsOf(file)[1]!
+  const revealed = revealGap(gap, source, { top: 2, bottom: 3 })
+  expect(revealed.hidden).toBe(3)
+  expect(revealed.top.map(r => [r.left?.no, r.right?.no, r.right?.text])).toEqual([
+    [14, 15, 'line 14'],
+    [15, 16, 'line 15'],
+  ])
+  expect(revealed.bottom.map(r => r.right?.no)).toEqual([20, 21, 22])
+  // 開きすぎても範囲に収める
+  expect(revealGap(gap, source, { top: 100, bottom: 100 })).toEqual(expect.objectContaining({ hidden: 0 }))
+  expect(revealGap(gap, source, { top: 100, bottom: 100 }).top.length).toBe(8)
+})
+
+test('行数0の側をもつ hunk の範囲', () => {
+  expect(hunkSpan({ header: '@@ -3,2 +2,0 @@', rows: [
+    { left: { kind: 'del', no: 3, text: 'a' }, right: null },
+    { left: { kind: 'del', no: 4, text: 'b' }, right: null },
+  ] })).toEqual({ oldStart: 3, oldEnd: 4, newStart: 3, newEnd: 2 })
+})
+
+test('比較元に選べるブランチを並べる', () => {
+  const stdout = ['refs/heads/main', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/feature/x', 'refs/remotes/upstream/main', 'refs/heads/main', ''].join('\n')
+  expect(parseBranches(stdout)).toEqual(['main', 'origin/feature/x', 'upstream/main'])
 })

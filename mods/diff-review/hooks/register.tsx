@@ -5,7 +5,7 @@ import type {
   DiffReviewCell,
   DiffReviewComment,
   DiffReviewFile,
-  DiffReviewHunk,
+  DiffReviewRow,
   DiffReviewMode,
   DiffReviewSide,
   DiffReviewSnapshot,
@@ -16,9 +16,12 @@ import {
   buildTree,
   commentKey,
   displayWidth,
+  EXPAND_STEP,
+  expansionKey,
   fillWidth,
   fitWidth,
   formatComments,
+  gapsOf,
   headerOf,
   HEADER_LINES,
   isGeneratedHeader,
@@ -26,9 +29,13 @@ import {
   isInRange,
   lineLabel,
   nextTarget,
+  parseBranches,
   parseCheckAttr,
   parseCommentInput,
   parseUnifiedDiff,
+  revealGap,
+  sanitize,
+  splitLines,
   toUnified,
   untrackedFile,
 } from './diff'
@@ -36,6 +43,8 @@ import {
 const PANE = 'diff-review'
 const MAX_UNTRACKED = 30
 const MAX_UNTRACKED_BYTES = 200_000
+// 差分のない行を展開するために読むファイルの上限
+const MAX_SOURCE_BYTES = 500_000
 const GUTTER = 5
 // 選択中の行の背景。赤や緑の文字が読める暗めの青
 const SELECTED_BG = '#302714'
@@ -68,6 +77,14 @@ const collapsed = atom({ plugin: 'diff-review', key: 'collapsed' } as const, [])
 
 const showGenerated = atom({ plugin: 'diff-review', key: 'showGenerated' } as const, false)
 
+// branch モードで比べる相手。null なら既定ブランチを探す
+const baseBranch = atom({ plugin: 'diff-review', key: 'baseBranch' } as const, null)
+const DEFAULT_BASE = ':default'
+const MAX_BRANCHES = 200
+
+// hunk の間で展開した行数。行番号がずれるので比べる対象を変えたら捨てる
+const expanded = atom({ plugin: 'diff-review', key: 'expanded' } as const, {})
+
 // これより狭いペインではサイドバーをやめ、ファイルをプルダウンで選ぶ
 const SIDEBAR_MIN_COLUMNS = 80
 // サイドバーと左右の差分が並ぶよう、横に置くペインにはこの幅を求める (手で広げた幅があればそちらが優先)
@@ -79,12 +96,14 @@ const git = ($: EngineInterface, args: string[]) => $.process.run(['git', ...arg
 
 const firstLine = (text: string): string => text.trim().split('\n')[0] ?? ''
 
-// branch モードは origin の既定ブランチとの merge-base、見つからなければ HEAD と比べる
-const resolveBase = async ($: EngineInterface, current: DiffReviewMode): Promise<Base> => {
+// branch モードは選んだブランチ (未指定なら origin の既定ブランチ) との merge-base、見つからなければ HEAD と比べる
+//   GitHub の PR と同じく、比較元が先に進んでいてもこのブランチで入れた変更だけが出る
+const resolveBase = async ($: EngineInterface, current: DiffReviewMode, chosen: string | null): Promise<Base> => {
   if (current === 'uncommitted') return { ref: 'HEAD', label: 'HEAD (未コミット)' }
 
   const head = await git($, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'])
-  const candidates = [firstLine(head.stdout), 'origin/main', 'origin/master', 'main', 'master'].filter(c => c !== '')
+  const candidates =
+    chosen !== null ? [chosen] : [firstLine(head.stdout), 'origin/main', 'origin/master', 'main', 'master'].filter(c => c !== '')
   for (const candidate of candidates) {
     const verified = await git($, ['rev-parse', '--verify', '--quiet', candidate])
     if (verified.exitCode !== 0) continue
@@ -93,7 +112,12 @@ const resolveBase = async ($: EngineInterface, current: DiffReviewMode): Promise
     const sha = firstLine(mergeBase.stdout)
     return { ref: sha, label: `${candidate} (merge-base ${sha.slice(0, 7)})` }
   }
-  return { ref: 'HEAD', label: 'HEAD (既定ブランチが見つからない)' }
+  return { ref: 'HEAD', label: chosen !== null ? `HEAD (${chosen} が見つからない)` : 'HEAD (既定ブランチが見つからない)' }
+}
+
+const loadBranches = async ($: EngineInterface): Promise<string[]> => {
+  const listed = await git($, ['for-each-ref', '--sort=-committerdate', '--format=%(refname)', 'refs/heads', 'refs/remotes'])
+  return listed.exitCode === 0 ? parseBranches(listed.stdout).slice(0, MAX_BRANCHES) : []
 }
 
 const loadUntracked = async ($: EngineInterface, root: string): Promise<DiffReviewFile[]> => {
@@ -140,25 +164,45 @@ const markGenerated = async ($: EngineInterface, root: string, files: DiffReview
   )
 }
 
+// git diff は base と作業ツリーを比べるので、変更後の中身は作業ツリーから読める
+const loadSources = ($: EngineInterface, root: string, files: DiffReviewFile[]): Promise<DiffReviewFile[]> =>
+  Promise.all(
+    files.map(async f => {
+      if (f.isBinary || f.isUntracked || f.hunks.length === 0) return f
+      try {
+        const stat = await $.fs.stat(`${root}/${f.path}`)
+        if (stat.size > MAX_SOURCE_BYTES) return f
+        const content = await $.fs.read(`${root}/${f.path}`)
+        return typeof content === 'string' ? { ...f, source: splitLines(content).map(sanitize) } : f
+      } catch {
+        // 削除したファイルなどは展開しない
+        return f
+      }
+    }),
+  )
+
 const visibleFiles = (files: readonly DiffReviewFile[], isShown: boolean): DiffReviewFile[] =>
   isShown ? [...files] : files.filter(f => f.isGenerated !== true)
 
-const takeSnapshot = async ($: EngineInterface, current: DiffReviewMode): Promise<DiffReviewSnapshot> => {
+const takeSnapshot = async ($: EngineInterface, current: DiffReviewMode, chosen: string | null): Promise<DiffReviewSnapshot> => {
   const top = await git($, ['rev-parse', '--show-toplevel'])
   if (top.exitCode !== 0) return { baseLabel: '-', files: [], error: 'git リポジトリの中ではありません' }
   const root = firstLine(top.stdout)
 
-  const base = await resolveBase($, current)
+  const base = await resolveBase($, current, chosen)
+  const branches = current === 'branch' ? await loadBranches($) : []
   const diff = await $.process.run(
     ['git', 'diff', '--no-color', '--no-ext-diff', '--find-renames', '-U3', base.ref],
     { cwd: root },
   )
   if (diff.exitCode !== 0) {
-    return { baseLabel: base.label, files: [], error: firstLine(diff.stderr) || 'git diff が失敗しました' }
+    return { baseLabel: base.label, branches, files: [], error: firstLine(diff.stderr) || 'git diff が失敗しました' }
   }
-  const files = await markGenerated($, root, [...parseUnifiedDiff(diff.stdout), ...(await loadUntracked($, root))])
+  const parsed = await loadSources($, root, parseUnifiedDiff(diff.stdout))
+  const files = await markGenerated($, root, [...parsed, ...(await loadUntracked($, root))])
   return {
     baseLabel: base.label,
+    branches,
     files,
     error: diff.isStdoutTruncated ? '差分が大きすぎるため途中までしか表示していません' : null,
   }
@@ -174,7 +218,7 @@ const refresh = async ($: EngineInterface): Promise<void> => {
   if (isRefreshing) return
   isRefreshing = true
   try {
-    const next = await takeSnapshot($, await read($, mode))
+    const next = await takeSnapshot($, await read($, mode), await read($, baseBranch))
     await update($, snapshot, () => next)
     await reselect($, visibleFiles(next.files, await read($, showGenerated)))
   } finally {
@@ -186,6 +230,13 @@ const toggleGenerated = async ($: EngineInterface) => {
   const isShown = !(await read($, showGenerated))
   await update($, showGenerated, () => isShown)
   await reselect($, visibleFiles((await read($, snapshot))?.files ?? [], isShown))
+}
+
+// 比較元を変えると行番号がずれるので、展開した行は捨てる
+const setBaseBranch = async ($: EngineInterface, value: string | null) => {
+  await update($, baseBranch, () => value)
+  await update($, mode, () => 'branch')
+  await update($, expanded, () => ({}))
 }
 
 const isPaneOpen = async ($: EngineInterface): Promise<boolean> =>
@@ -203,7 +254,7 @@ export const register: Register = on => {
     await $.command.register({
       name: 'diff-review',
       description: 'git の差分をペインで開き、行コメントを Claude に渡す',
-      argumentHint: '[branch|uncommitted|split|unified|generated|close]',
+      argumentHint: '[branch|uncommitted|base <branch>|split|unified|generated|close]',
     })
     const saved = await $.store.get(VIEW_STORE_KEY)
     if (saved === 'split' || saved === 'unified') await update($, view, () => saved)
@@ -218,7 +269,13 @@ export const register: Register = on => {
       await $.ui.close({ id: PANE })
       return { text: 'diff-review を閉じました' }
     }
-    if (arg === 'branch' || arg === 'uncommitted') await update($, mode, () => arg)
+    if (arg === 'branch' || arg === 'uncommitted') {
+      await update($, mode, () => arg)
+      await update($, expanded, () => ({}))
+    }
+    // "base origin/feature" で比較元を選ぶ。"base" だけなら既定ブランチに戻す
+    const baseArg = /^base(?:\s+(\S+))?$/.exec(arg)
+    if (baseArg !== null) await setBaseBranch($, baseArg[1] ?? null)
     if (arg === 'split' || arg === 'unified') await setView($, arg)
     if (arg === 'generated') await update($, showGenerated, isShown => !isShown)
 
@@ -250,6 +307,8 @@ export const register: Register = on => {
     const aimed = await read($, target)
     const closedDirs = await read($, collapsed)
     const shape = await read($, view)
+    const opened = await read($, expanded)
+    const chosenBase = await read($, baseBranch)
     const isGeneratedShown = await read($, showGenerated)
     const files = visibleFiles(snap?.files ?? [], isGeneratedShown)
     const generatedCount = (snap?.files ?? []).filter(f => f.isGenerated === true).length
@@ -271,6 +330,7 @@ export const register: Register = on => {
 
     const setMode = (value: DiffReviewMode) => async () => {
       await update($, mode, () => value)
+      await update($, expanded, () => ({}))
       await refresh($)
     }
 
@@ -377,8 +437,8 @@ export const register: Register = on => {
         </Box>
       )
 
-    const unifiedRows = (shown: DiffReviewFile, hunk: DiffReviewHunk, hunkIndex: number) =>
-      toUnified(hunk).flatMap((line, i) => {
+    const unifiedRows = (shown: DiffReviewFile, rows: readonly DiffReviewRow[], prefix: string) =>
+      toUnified({ header: '', rows: [...rows] }).flatMap((line, i) => {
         const isTarget =
           (line.oldNo !== null && isInRange(aimed, shown.path, 'L', line.oldNo)) ||
           (line.newNo !== null && isInRange(aimed, shown.path, 'R', line.newNo))
@@ -391,7 +451,7 @@ export const register: Register = on => {
         const isLit = tone !== undefined || isTarget || hasNote
         const sign = line.kind === 'add' ? '+' : line.kind === 'del' ? '-' : ' '
         return [
-          <Box flexDirection="row" key={`uni-${hunkIndex}-${i}`} backgroundColor={bg}>
+          <Box flexDirection="row" key={`uni-${prefix}-${i}`} backgroundColor={bg}>
             {lineNumber(shown.path, 'L', line.oldNo, isLit, numBg)}
             <Text backgroundColor={numBg}> </Text>
             {lineNumber(shown.path, 'R', line.newNo, isLit, numBg)}
@@ -406,30 +466,79 @@ export const register: Register = on => {
         ]
       })
 
+    const splitRows = (shown: DiffReviewFile, rows: readonly DiffReviewRow[], prefix: string) =>
+      rows.flatMap((row, r) => [
+        <Box flexDirection="row" key={`row-${prefix}-${r}`}>
+          {cell(shown.path, 'L', row.left)}
+          <Text color={MUTED} backgroundColor={CANVAS_BG}>│</Text>
+          {cell(shown.path, 'R', row.right)}
+        </Box>,
+        ...under(shown.path, row.left?.no ?? null, row.right?.no ?? null),
+      ])
+
+    const rowsOf = (shown: DiffReviewFile, rows: readonly DiffReviewRow[], prefix: string) =>
+      shape === 'unified' ? unifiedRows(shown, rows, prefix) : splitRows(shown, rows, prefix)
+
+    const expand = (key: string, top: number, bottom: number) =>
+      update($, expanded, all => ({ ...all, [key]: { top, bottom } }))
+
+    // hunk のヘッダ行。前に隠れた行があれば、GitHub と同じく展開ボタンを並べる
+    const hunkHeader = (index: number, header: string, buttons: { key: string; label: string; onPress: () => unknown }[]) => {
+      const used = buttons.reduce((sum, button) => sum + displayWidth(button.label) + 1, 0)
+      return (
+        <Box flexDirection="row" key={`hunk-${index}`} backgroundColor={HUNK_BG}>
+          <Text backgroundColor={HUNK_NUM_BG}>{' '.repeat(GUTTER)}</Text>
+          {buttons.flatMap(button => [
+            <Text backgroundColor={HUNK_BG}> </Text>,
+            <Button key={button.key} label={button.label} plain onPress={button.onPress} />,
+          ])}
+          <Text color={MUTED} backgroundColor={HUNK_BG}>
+            {fillWidth(` ${header}`, diffWidth - GUTTER - used)}
+          </Text>
+        </Box>
+      )
+    }
+
+    // index 番目の hunk の前 (hunks.length なら最後の hunk の後) に隠れた行と、その展開ボタン
+    //   隠れた行が残っていれば、上 (前の hunk の続き) と下 (次の hunk の手前) から EXPAND_STEP 行ずつ開ける
+    //   すべて開いたら、間のヘッダ行も消して前後をつなげる
+    const gapBlock = (shown: DiffReviewFile, index: number, header: string | null) => {
+      const gap = gapsOf(shown).find(g => g.index === index)
+      if (gap === undefined || shown.source == null) return header === null ? [] : [hunkHeader(index, header, [])]
+      const key = expansionKey(shown.path, index)
+      const state = opened[key] ?? { top: 0, bottom: 0 }
+      const revealed = revealGap(gap, shown.source, state)
+      const size = revealed.top.length + revealed.bottom.length + revealed.hidden
+      const isFirst = index === 0
+      const isLast = index === shown.hunks.length
+      const buttons =
+        revealed.hidden === 0
+          ? []
+          : revealed.hidden <= EXPAND_STEP
+            ? [{ key: `expand-${index}-all`, label: `${revealed.hidden}行を展開`, onPress: () => expand(key, size, 0) }]
+            : [
+                ...(isFirst ? [] : [{ key: `expand-${index}-down`, label: `下へ${EXPAND_STEP}行`, onPress: () => expand(key, state.top + EXPAND_STEP, state.bottom) }]),
+                ...(isLast ? [] : [{ key: `expand-${index}-up`, label: `上へ${EXPAND_STEP}行`, onPress: () => expand(key, state.top, state.bottom + EXPAND_STEP) }]),
+                { key: `expand-${index}-all`, label: `すべて (${revealed.hidden}行)`, onPress: () => expand(key, size, 0) },
+              ]
+      const isHeaderShown = header !== null ? size === 0 || revealed.hidden > 0 : revealed.hidden > 0
+      return [
+        ...rowsOf(shown, revealed.top, `gap-${index}-top`),
+        ...(isHeaderShown ? [hunkHeader(index, header ?? '', buttons)] : []),
+        ...rowsOf(shown, revealed.bottom, `gap-${index}-bottom`),
+      ]
+    }
+
     const fileView = (shown: DiffReviewFile) => {
       if (shown.isBinary) return <Text dimColor>バイナリファイルのため表示しません</Text>
       if (shown.hunks.length === 0) return <Text dimColor>表示できる差分がありません (モード変更やリネームのみ)</Text>
       return (
         <Box flexDirection="column">
           {shown.hunks.flatMap((hunk, hunkIndex) => [
-            <Box flexDirection="row" key={`hunk-${hunkIndex}`} backgroundColor={HUNK_BG}>
-              <Text backgroundColor={HUNK_NUM_BG}>{' '.repeat(GUTTER)}</Text>
-              <Text color={MUTED} backgroundColor={HUNK_BG}>
-                {fillWidth(` ${hunk.header}`, diffWidth - GUTTER)}
-              </Text>
-            </Box>,
-            ...(shape === 'unified' ? unifiedRows(shown, hunk, hunkIndex) : []),
-            ...(shape === 'unified' ? [] : hunk.rows).flatMap((row, r) => {
-              return [
-                <Box flexDirection="row" key={`row-${hunkIndex}-${r}`}>
-                  {cell(shown.path, 'L', row.left)}
-                  <Text color={MUTED} backgroundColor={CANVAS_BG}>│</Text>
-                  {cell(shown.path, 'R', row.right)}
-                </Box>,
-                ...under(shown.path, row.left?.no ?? null, row.right?.no ?? null),
-              ]
-            }),
+            ...gapBlock(shown, hunkIndex, hunk.header),
+            ...rowsOf(shown, hunk.rows, `${hunkIndex}`),
           ])}
+          {gapBlock(shown, shown.hunks.length, null)}
           {shown.isTruncated && <Text dimColor>... {`以降は省略しています`}</Text>}
         </Box>
       )
@@ -590,6 +699,23 @@ export const register: Register = on => {
             />
           )}
         </Box>
+        {current === 'branch' && (
+          <Select
+            key="base"
+            label="比較元"
+            value={chosenBase ?? DEFAULT_BASE}
+            options={[
+              { value: DEFAULT_BASE, label: '既定ブランチ (origin/HEAD)' },
+              // コマンドで一覧にないものを指定したときも、選んだものが見えるように足す
+              ...(chosenBase !== null && !(snap?.branches ?? []).includes(chosenBase) ? [chosenBase] : []).map(b => ({ value: b, label: b })),
+              ...(snap?.branches ?? []).map(b => ({ value: b, label: b })),
+            ]}
+            onSelect={async value => {
+              await setBaseBranch($, value === DEFAULT_BASE ? null : value)
+              await refresh($)
+            }}
+          />
+        )}
         <Text dimColor wrap="truncate-end">
           base: {snap?.baseLabel ?? '読み込み中...'}
         </Text>

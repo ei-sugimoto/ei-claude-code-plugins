@@ -1,6 +1,7 @@
 import type {
   DiffReviewCell,
   DiffReviewComment,
+  DiffReviewExpansion,
   DiffReviewFile,
   DiffReviewHunk,
   DiffReviewRow,
@@ -74,7 +75,12 @@ const newFile = (path: string): DiffReviewFile => ({
   isTruncated: false,
   isGenerated: false,
   hunks: [],
+  source: null,
 })
+
+// ファイルの中身を行に分ける。末尾の改行は最終行の後ろの空行として数えない
+export const splitLines = (content: string): string[] =>
+  content.endsWith('\n') ? content.slice(0, -1).split('\n') : content.split('\n')
 
 const countRows = (file: DiffReviewFile): number =>
   file.hunks.reduce((sum, hunk) => sum + hunk.rows.length, 0)
@@ -190,7 +196,7 @@ export const parseUnifiedDiff = (text: string): DiffReviewFile[] => {
 
 // untracked なファイルは git diff に出ないので、全行追加として組み立てる
 export const untrackedFile = (path: string, content: string): DiffReviewFile => {
-  const lines = content.endsWith('\n') ? content.slice(0, -1).split('\n') : content.split('\n')
+  const lines = splitLines(content)
   const file = newFile(path)
   file.isUntracked = true
   file.added = lines.length
@@ -290,6 +296,17 @@ export const parseCheckAttr = (stdout: string): Set<string> => {
     if (parts[i + 1] === 'linguist-generated' && (value === 'true' || value === 'set')) paths.add(parts[i] ?? '')
   }
   return paths
+}
+
+// git for-each-ref --format=%(refname) の出力を、比較元に選べるブランチ名 (main, origin/feature 等) にする
+//   origin/HEAD は既定ブランチを指すだけの別名なので除く
+export const parseBranches = (stdout: string): string[] => {
+  const names = stdout
+    .split('\n')
+    .map(line => line.trim())
+    .filter(ref => ref !== '' && !/^refs\/remotes\/[^/]+\/HEAD$/.test(ref))
+    .map(ref => ref.replace(/^refs\/(heads|remotes)\//, ''))
+  return [...new Set(names)]
 }
 
 export type ParsedComment ={ side: DiffReviewSide; start: number; end: number; body: string }
@@ -410,4 +427,67 @@ export const toUnified = (hunk: DiffReviewHunk): UnifiedLine[] => {
   }
   flush()
   return lines
+}
+
+// GitHub と同じく、展開ボタン1回で見せる行数
+export const EXPAND_STEP = 20
+
+type HunkSpan = { oldStart: number; oldEnd: number; newStart: number; newEnd: number }
+
+// hunk が占める行の範囲。行数0の側 ("+5,0" 等) はヘッダの行の直後から始まる空の範囲になる
+export const hunkSpan = (hunk: DiffReviewHunk): HunkSpan | null => {
+  const header = HUNK_HEADER.exec(hunk.header)
+  if (header === null) return null
+  const oldCount = hunk.rows.filter(row => row.left !== null).length
+  const newCount = hunk.rows.filter(row => row.right !== null).length
+  const oldStart = Number(header[1]) + (oldCount === 0 ? 1 : 0)
+  const newStart = Number(header[2]) + (newCount === 0 ? 1 : 0)
+  return { oldStart, oldEnd: oldStart + oldCount - 1, newStart, newEnd: newStart + newCount - 1 }
+}
+
+// hunk の前 (index === hunks.length なら最後の hunk の後) に隠れている、変更後の側の行範囲
+//   delta は変更前の行番号 - 変更後の行番号。差分のない行なのでこの範囲では一定
+export type DiffReviewGap = { index: number; newStart: number; newEnd: number; delta: number }
+
+export const gapsOf = (file: DiffReviewFile): DiffReviewGap[] => {
+  if (file.source == null || file.isBinary || file.isUntracked) return []
+  const spans = file.hunks.map(hunkSpan)
+  if (spans.length === 0 || spans.some(span => span === null)) return []
+  const known = spans as HunkSpan[]
+  const gaps: DiffReviewGap[] = known.map((span, index) => {
+    const prev = known[index - 1]
+    return {
+      index,
+      newStart: prev === undefined ? 1 : prev.newEnd + 1,
+      newEnd: span.newStart - 1,
+      delta: span.oldStart - span.newStart,
+    }
+  })
+  // 途中で省略したファイルは最後の hunk の後ろが本当の末尾ではないので、末尾の展開は出さない
+  const last = known.at(-1)
+  if (last !== undefined && !file.isTruncated) {
+    gaps.push({ index: known.length, newStart: last.newEnd + 1, newEnd: file.source.length, delta: last.oldEnd - last.newEnd })
+  }
+  return gaps
+}
+
+export const expansionKey = (path: string, index: number): string => `${path}\u0000${index}`
+
+export type RevealedGap = { top: DiffReviewRow[]; bottom: DiffReviewRow[]; hidden: number }
+
+// 隠れた範囲のうち、上 (前の hunk の続き) と下 (次の hunk の手前) から開いた行を差分のない行として返す
+export const revealGap = (gap: DiffReviewGap, source: readonly string[], expansion: DiffReviewExpansion | undefined): RevealedGap => {
+  const size = Math.max(0, gap.newEnd - gap.newStart + 1)
+  const top = Math.min(size, expansion?.top ?? 0)
+  const bottom = Math.min(size - top, expansion?.bottom ?? 0)
+  const row = (newNo: number): DiffReviewRow => {
+    const text = source[newNo - 1] ?? ''
+    return { left: { kind: 'ctx', no: newNo + gap.delta, text }, right: { kind: 'ctx', no: newNo, text } }
+  }
+  const range = (from: number, count: number) => Array.from({ length: count }, (_, i) => row(from + i))
+  return {
+    top: range(gap.newStart, top),
+    bottom: range(gap.newEnd - bottom + 1, bottom),
+    hidden: size - top - bottom,
+  }
 }

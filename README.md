@@ -72,6 +72,8 @@ Git worktreeを使った並行開発を支援します。
 - 左のサイドバーに変更ファイルをディレクトリ構造で表示。ディレクトリはクリックで折りたたみ
 - 表示は split (左右) と unified (1列) を切り替え。選んだ表示は次のセッションにも残る
 - 比較の基準は `branch` (origin の既定ブランチとの merge-base) と `uncommitted` (HEAD)。untracked ファイルも含む
+- branch モードでは「比較元」のプルダウンで比べる相手のブランチ (ローカル、`origin/feature-x` などのリモート) を選べる。未指定なら origin の既定ブランチ。どれを選んでもそのブランチとの merge-base と比べる
+- hunk の間やファイルの先頭・末尾の差分のない行は、hunk ヘッダ行のボタンで開く。「上へ20行」「下へ20行」で20行ずつ、「すべて」で残りを一度に開き、開いた行にもコメントできる
 - 行番号を2回押すとコメント欄が開く。同じ行を2回で1行、起点のあと同じ側の別の行を押すと範囲。1回目は起点のハイライトだけ
 - 「Claude に渡す」で、コメントを `path:行: 本文` の箇条書きにしてプロンプトへ入れる (送信は Enter)
 - 開いている間はターンが終わるたびに差分を取り直す
@@ -86,7 +88,7 @@ Git worktreeを使った並行開発を支援します。
 | 更新 | `r` |
 | Claude に渡す | `s` |
 | 行指定でコメント | 下の入力欄に `R12 本文`、`L3-5 本文` (L=変更前、R=変更後) |
-| 引数 | `/diff-review branch`、`uncommitted`、`split`、`unified`、`generated`、`close` |
+| 引数 | `/diff-review branch`、`uncommitted`、`base <branch>` (`base` だけで既定に戻す)、`split`、`unified`、`generated`、`close` |
 
 ```bash
 /plugin install diff-review@ei-plugins

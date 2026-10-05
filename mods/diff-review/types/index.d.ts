@@ -28,10 +28,14 @@ export type DiffReviewFile = {
   isTruncated: boolean
   isGenerated: boolean
   hunks: DiffReviewHunk[]
+  // 差分のない行を展開するための変更後のファイルの中身。読めないファイルは null
+  source?: string[] | null
 }
 
 export type DiffReviewSnapshot = {
   baseLabel: string
+  // 比較元に選べるブランチ (新しくコミットされた順)
+  branches?: string[]
   files: DiffReviewFile[]
   error: string | null
 }
@@ -56,6 +60,12 @@ export type DiffReviewComment = DiffReviewRange & {
   body: string
 }
 
+// hunk の間に隠れた行のうち、上から開いた行数と下から開いた行数
+export type DiffReviewExpansion = {
+  top: number
+  bottom: number
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'diff-review': {
@@ -67,6 +77,10 @@ declare module 'claude-code' {
       collapsed: string[]
       view: DiffReviewView
       showGenerated: boolean
+      // expansionKey(path, hunk の番号) ごとの展開状態
+      expanded: Record<string, DiffReviewExpansion>
+      // branch モードの比較元。null なら origin の既定ブランチ
+      baseBranch: string | null
     }
   }
 }
