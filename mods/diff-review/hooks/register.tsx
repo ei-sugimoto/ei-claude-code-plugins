@@ -39,6 +39,7 @@ import {
   splitLines,
   toUnified,
   untrackedFile,
+  wrapWidth,
 } from './diff'
 
 const PANE = 'diff-review'
@@ -72,6 +73,10 @@ const INLINE_INPUT = 'inline-comment'
 // split (左右) と unified (1列) のどちらで描くか。セッションをまたいで $.store にも残す
 const view = atom({ plugin: 'diff-review', key: 'view' } as const, 'split')
 const VIEW_STORE_KEY = 'view'
+
+// 長い行は GitHub と同じく既定で折り返す。切り替えは $.store にも残す
+const wrapped = atom({ plugin: 'diff-review', key: 'isWrapped' } as const, true)
+const WRAP_STORE_KEY = 'isWrapped'
 
 // 折りたたんだディレクトリのパス
 const collapsed = atom({ plugin: 'diff-review', key: 'collapsed' } as const, [])
@@ -248,6 +253,12 @@ const setView = async ($: EngineInterface, value: DiffReviewView) => {
   await $.store.set(VIEW_STORE_KEY, value)
 }
 
+const toggleWrap = async ($: EngineInterface) => {
+  const isWrapped = !(await read($, wrapped))
+  await update($, wrapped, () => isWrapped)
+  await $.store.set(WRAP_STORE_KEY, isWrapped)
+}
+
 const newId = (): string => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 
 export const register: Register = on => {
@@ -255,10 +266,12 @@ export const register: Register = on => {
     await $.command.register({
       name: 'diff-review',
       description: 'git の差分をペインで開き、行コメントを Claude に渡す',
-      argumentHint: '[branch|uncommitted|base <branch>|split|unified|generated|close]',
+      argumentHint: '[branch|uncommitted|base <branch>|split|unified|wrap|generated|close]',
     })
     const saved = await $.store.get(VIEW_STORE_KEY)
     if (saved === 'split' || saved === 'unified') await update($, view, () => saved)
+    const savedWrap = await $.store.get(WRAP_STORE_KEY)
+    if (typeof savedWrap === 'boolean') await update($, wrapped, () => savedWrap)
     // ホットリロードでも session.start が走る。開いたままのペインを新しいコードで描き直す
     $.ui.invalidate('ui.render')
     return next(e)
@@ -278,6 +291,7 @@ export const register: Register = on => {
     const baseArg = /^base(?:\s+(\S+))?$/.exec(arg)
     if (baseArg !== null) await setBaseBranch($, baseArg[1] ?? null)
     if (arg === 'split' || arg === 'unified') await setView($, arg)
+    if (arg === 'wrap') await toggleWrap($)
     if (arg === 'generated') await update($, showGenerated, isShown => !isShown)
 
     const opened = await $.ui.open({ id: PANE, title: 'diff review', focus: true, columns: WANTED_COLUMNS })
@@ -308,6 +322,7 @@ export const register: Register = on => {
     const aimed = await read($, target)
     const closedDirs = await read($, collapsed)
     const shape = await read($, view)
+    const isWrapped = await read($, wrapped)
     const opened = await read($, expanded)
     const chosenBase = await read($, baseBranch)
     const isGeneratedShown = await read($, showGenerated)
@@ -343,37 +358,57 @@ export const register: Register = on => {
       await $.ui.focus({ requestId: PANE, key: INLINE_INPUT }).catch(() => undefined)
     }
 
-    const cell = (path: string, side: DiffReviewSide, value: DiffReviewCell | null) => {
+    // 記号のあとの本文を幅 width で折り返し、2行目以降は記号の列を空ける。折り返さないときは1行に切り詰める
+    const bodyLines = (sign: string, text: string, width: number): string[] =>
+      isWrapped ? wrapWidth(text, width - 1).map((chunk, i) => `${i === 0 ? sign : ' '}${chunk}`) : [fillWidth(`${sign}${text}`, width)]
+
+    const signOf = (kind: DiffReviewCell['kind']) => (kind === 'add' ? '+' : kind === 'del' ? '-' : ' ')
+
+    const cellLines = (value: DiffReviewCell | null): string[] =>
+      value === null ? [] : bodyLines(signOf(value.kind), value.text, half - GUTTER)
+
+    // 左右で折り返した行数が違うときは、短い側を height 行まで空行で埋めて高さを揃える
+    const cell = (path: string, side: DiffReviewSide, value: DiffReviewCell | null, lines: readonly string[], height: number) => {
       if (value === null) {
         return (
-          <Box width={half} backgroundColor={EMPTY_BG}>
-            <Text backgroundColor={EMPTY_BG}>{' '.repeat(half)}</Text>
+          <Box width={half} flexDirection="column" backgroundColor={EMPTY_BG}>
+            {Array.from({ length: height }, () => (
+              <Text backgroundColor={EMPTY_BG}>{' '.repeat(half)}</Text>
+            ))}
           </Box>
         )
       }
       const isTarget = isInRange(aimed, path, side, value.no)
       const hasNote = noted.has(commentKey(path, side, value.no))
       const tone = value.kind === 'ctx' ? undefined : DIFF_BG[value.kind]
-      const sign = value.kind === 'add' ? '+' : value.kind === 'del' ? '-' : ' '
       const bg = isTarget ? SELECTED_BG : (tone?.line ?? CANVAS_BG)
       const numBg = isTarget ? SELECTED_BG : (tone?.num ?? CANVAS_BG)
+      const padded = [...lines, ...Array.from({ length: height - lines.length }, () => ' '.repeat(half - GUTTER))]
       return (
-        <Box width={half} flexDirection="row" backgroundColor={bg}>
-          <Box backgroundColor={numBg}>
-            <Button
-              key={`ln-${side}-${value.no}`}
-              label={String(value.no).padStart(GUTTER - 1)}
-              plain
-              dimColor={tone === undefined && !isTarget && !hasNote}
-              onPress={() => aim(path, side, value.no)}
-            />
-          </Box>
-          <Text color={isTarget ? 'cyan' : 'yellow'} backgroundColor={numBg} bold={isTarget}>
-            {isTarget ? '>' : hasNote ? '*' : ' '}
-          </Text>
-          <Text color={FG} backgroundColor={bg} bold={isTarget} wrap="truncate-end">
-            {fillWidth(`${sign}${value.text}`, half - GUTTER)}
-          </Text>
+        <Box width={half} flexDirection="column" backgroundColor={bg}>
+          {padded.map((line, i) => (
+            <Box flexDirection="row" backgroundColor={bg}>
+              {i === 0 ? (
+                <Box backgroundColor={numBg}>
+                  <Button
+                    key={`ln-${side}-${value.no}`}
+                    label={String(value.no).padStart(GUTTER - 1)}
+                    plain
+                    dimColor={tone === undefined && !isTarget && !hasNote}
+                    onPress={() => aim(path, side, value.no)}
+                  />
+                </Box>
+              ) : (
+                <Text backgroundColor={numBg}>{' '.repeat(GUTTER - 1)}</Text>
+              )}
+              <Text color={isTarget ? 'cyan' : 'yellow'} backgroundColor={numBg} bold={isTarget}>
+                {i === 0 && isTarget ? '>' : i === 0 && hasNote ? '*' : ' '}
+              </Text>
+              <Text color={FG} backgroundColor={bg} bold={isTarget} wrap="truncate-end">
+                {line}
+              </Text>
+            </Box>
+          ))}
         </Box>
       )
     }
@@ -450,32 +485,49 @@ export const register: Register = on => {
         const bg = isTarget ? SELECTED_BG : (tone?.line ?? CANVAS_BG)
         const numBg = isTarget ? SELECTED_BG : (tone?.num ?? CANVAS_BG)
         const isLit = tone !== undefined || isTarget || hasNote
-        const sign = line.kind === 'add' ? '+' : line.kind === 'del' ? '-' : ' '
+        const gutter = (GUTTER - 1) * 2 + 2
         return [
-          <Box flexDirection="row" key={`uni-${prefix}-${i}`} backgroundColor={bg}>
-            {lineNumber(shown.path, 'L', line.oldNo, isLit, numBg)}
-            <Text backgroundColor={numBg}> </Text>
-            {lineNumber(shown.path, 'R', line.newNo, isLit, numBg)}
-            <Text color={isTarget ? 'cyan' : 'yellow'} backgroundColor={numBg} bold={isTarget}>
-              {isTarget ? '>' : hasNote ? '*' : ' '}
-            </Text>
-            <Text color={FG} backgroundColor={bg} bold={isTarget} wrap="truncate-end">
-              {fillWidth(`${sign}${line.text}`, diffWidth - (GUTTER - 1) * 2 - 2)}
-            </Text>
-          </Box>,
+          ...bodyLines(signOf(line.kind), line.text, diffWidth - gutter).map((body, part) => (
+            <Box flexDirection="row" key={`uni-${prefix}-${i}-${part}`} backgroundColor={bg}>
+              {part === 0 ? (
+                [
+                  lineNumber(shown.path, 'L', line.oldNo, isLit, numBg),
+                  <Text backgroundColor={numBg}> </Text>,
+                  lineNumber(shown.path, 'R', line.newNo, isLit, numBg),
+                ]
+              ) : (
+                <Text backgroundColor={numBg}>{' '.repeat(gutter - 1)}</Text>
+              )}
+              <Text color={isTarget ? 'cyan' : 'yellow'} backgroundColor={numBg} bold={isTarget}>
+                {part === 0 && isTarget ? '>' : part === 0 && hasNote ? '*' : ' '}
+              </Text>
+              <Text color={FG} backgroundColor={bg} bold={isTarget} wrap="truncate-end">
+                {body}
+              </Text>
+            </Box>
+          )),
           ...under(shown.path, line.oldNo, line.newNo),
         ]
       })
 
     const splitRows = (shown: DiffReviewFile, rows: readonly DiffReviewRow[], prefix: string) =>
-      rows.flatMap((row, r) => [
-        <Box flexDirection="row" key={`row-${prefix}-${r}`}>
-          {cell(shown.path, 'L', row.left)}
-          <Text color={MUTED} backgroundColor={CANVAS_BG}>│</Text>
-          {cell(shown.path, 'R', row.right)}
-        </Box>,
-        ...under(shown.path, row.left?.no ?? null, row.right?.no ?? null),
-      ])
+      rows.flatMap((row, r) => {
+        const left = cellLines(row.left)
+        const right = cellLines(row.right)
+        const height = Math.max(1, left.length, right.length)
+        return [
+          <Box flexDirection="row" key={`row-${prefix}-${r}`}>
+            {cell(shown.path, 'L', row.left, left, height)}
+            <Box flexDirection="column">
+              {Array.from({ length: height }, () => (
+                <Text color={MUTED} backgroundColor={CANVAS_BG}>│</Text>
+              ))}
+            </Box>
+            {cell(shown.path, 'R', row.right, right, height)}
+          </Box>,
+          ...under(shown.path, row.left?.no ?? null, row.right?.no ?? null),
+        ]
+      })
 
     const rowsOf = (shown: DiffReviewFile, rows: readonly DiffReviewRow[], prefix: string) =>
       shape === 'unified' ? unifiedRows(shown, rows, prefix) : splitRows(shown, rows, prefix)
@@ -689,6 +741,7 @@ export const register: Register = on => {
           <Text dimColor>|</Text>
           <Button key="view-split" label="split" hotkey="p" variant={shape === 'split' ? 'primary' : undefined} onPress={() => setView($, 'split')} />
           <Button key="view-unified" label="unified" hotkey="n" variant={shape === 'unified' ? 'primary' : undefined} onPress={() => setView($, 'unified')} />
+          <Button key="wrap" label="折り返し" hotkey="w" variant={isWrapped ? 'primary' : undefined} onPress={() => toggleWrap($)} />
           {generatedCount > 0 && <Text dimColor>|</Text>}
           {generatedCount > 0 && (
             <Button

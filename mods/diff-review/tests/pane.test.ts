@@ -336,3 +336,36 @@ test('ブランチが多くても比較元のプルダウンを描く', async ($
   expect(await ui.find({ type: 'Text', text: /base: topic-250/ })).toBeDefined()
   await ui.unmount()
 })
+
+test('長い行をペイン幅で折り返し、w で切り詰めに戻す', async ($, on) => {
+  mock.store(on)
+  const long = `const x = '${'a'.repeat(60)}${'b'.repeat(60)}'`
+  const diff = ['diff --git a/src/a.ts b/src/a.ts', '--- a/src/a.ts', '+++ b/src/a.ts', '@@ -1 +1 @@', '-const x = 1', `+${long}`].join('\n')
+  on('process.run', (_, e) => {
+    if (e.argv.slice(1).join(' ').startsWith('diff ')) return { value: ok(diff) }
+    return { value: fakeGit(e.argv) }
+  })
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  await $.command.run({
+    command: 'diff-review',
+    args: 'split',
+    origin: { kind: 'composer' },
+    presentation: { isFullscreen: true, columns: 200 },
+  })
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...PANE, surface })
+    // 行末の b まで、続きの行に分けて出る
+    expect(await ui.find({ type: 'Text', text: /bbbb/ })).toBeDefined()
+    expect((await ui.findAll({ type: 'Text', text: /│/ })).length).toBeGreaterThan(1)
+
+    await ui.press({ key: 'view-unified' })
+    expect(await ui.find({ type: 'Text', text: /bbbb/ })).toBeDefined()
+
+    await ui.press({ key: 'wrap' })
+    expect(await ui.find({ type: 'Text', text: /bbbb/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: />\s*$/ })).toBeDefined()
+    await ui.press({ key: 'wrap' })
+    await ui.press({ key: 'view-split' })
+    await ui.unmount()
+  }
+})

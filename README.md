@@ -71,6 +71,7 @@ Git worktreeを使った並行開発を支援します。
 - `/diff-review` で git の差分をペインに表示。GitHub の Changes に近い操作感
 - 左のサイドバーに変更ファイルをディレクトリ構造で表示。ディレクトリはクリックで折りたたみ
 - 表示は split (左右) と unified (1列) を切り替え。選んだ表示は次のセッションにも残る
+- 長い行は GitHub と同じくペイン幅で折り返す。`w` で切り詰め表示に切り替えられ、この設定も次のセッションに残る
 - 比較の基準は `branch` (origin の既定ブランチとの merge-base) と `uncommitted` (HEAD)。untracked ファイルも含む
 - branch モードでは「比較元」のプルダウンで比べる相手のブランチ (ローカル、`origin/feature-x` などのリモート) を選べる。未指定なら origin の既定ブランチ。どれを選んでもそのブランチとの merge-base と比べる。プルダウンに出るのはコミットの新しい順に 64 件までなので、出てこないブランチは `/diff-review base <branch>` で指定する
 - hunk の間やファイルの先頭・末尾の差分のない行は、hunk ヘッダ行のボタンで開く。「上へ20行」「下へ20行」で20行ずつ、「すべて」で残りを一度に開き、開いた行にもコメントできる
@@ -84,11 +85,12 @@ Git worktreeを使った並行開発を支援します。
 | --- | --- |
 | branch / uncommitted | `b` / `u` |
 | split / unified | `p` / `n` |
+| 折り返しの切り替え | `w` |
 | 自動生成ファイルの表示 / 非表示 | `g` |
 | 更新 | `r` |
 | Claude に渡す | `s` |
 | 行指定でコメント | 下の入力欄に `R12 本文`、`L3-5 本文` (L=変更前、R=変更後) |
-| 引数 | `/diff-review branch`、`uncommitted`、`base <branch>` (`base` だけで既定に戻す)、`split`、`unified`、`generated`、`close` |
+| 引数 | `/diff-review branch`、`uncommitted`、`base <branch>` (`base` だけで既定に戻す)、`split`、`unified`、`wrap`、`generated`、`close` |
 
 ```bash
 /plugin install diff-review@ei-plugins

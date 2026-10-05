@@ -22,6 +22,7 @@ import {
   revealGap,
   toUnified,
   untrackedFile,
+  wrapWidth,
 } from '../hooks/diff'
 
 const SAMPLE = [
@@ -281,4 +282,11 @@ test('Select の選択肢を上限までに絞り、選択中の値は残す', (
   expect(kept).toHaveLength(MAX_SELECT_OPTIONS)
   expect(kept.at(-1)).toEqual({ value: 'b90' })
   expect(limitOptions(options, 'missing')).toEqual(options.slice(0, MAX_SELECT_OPTIONS))
+})
+
+test('表示幅で折り返して各行を埋める', () => {
+  expect(wrapWidth('abcdefg', 3)).toEqual(['abc', 'def', 'g  '])
+  expect(wrapWidth('', 3)).toEqual(['   '])
+  // 全角が行末に入らないときは1セル空けて次の行へ送る
+  expect(wrapWidth('ab日本', 3)).toEqual(['ab ', '日 ', '本 '])
 })

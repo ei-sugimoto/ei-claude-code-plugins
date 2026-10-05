@@ -76,6 +76,8 @@ declare module 'claude-code' {
       target: DiffReviewTarget | null
       collapsed: string[]
       view: DiffReviewView
+      // 長い行をペイン幅で折り返すか
+      isWrapped: boolean
       showGenerated: boolean
       // expansionKey(path, hunk の番号) ごとの展開状態
       expanded: Record<string, DiffReviewExpansion>

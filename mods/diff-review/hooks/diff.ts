@@ -63,7 +63,27 @@ export const fillWidth = (text: string, columns: number): string => {
   return `${fitted}${' '.repeat(Math.max(0, columns - displayWidth(fitted)))}`
 }
 
-const stripPrefix = (path: string): string => path.replace(/^[ab]\//, '')
+// 表示幅 columns ごとに折り返し、各行を空白で埋める。空の行も1行として返す
+export const wrapWidth = (text: string, columns: number): string[] => {
+  if (columns <= 0) return ['']
+  const lines: string[] = []
+  let out = ''
+  let used = 0
+  for (const char of text) {
+    const width = cellWidth(char)
+    if (used + width > columns) {
+      lines.push(`${out}${' '.repeat(columns - used)}`)
+      out = ''
+      used = 0
+    }
+    out += char
+    used += width
+  }
+  lines.push(`${out}${' '.repeat(Math.max(0, columns - used))}`)
+  return lines
+}
+
+const stripPrefix =(path: string): string => path.replace(/^[ab]\//, '')
 
 const newFile = (path: string): DiffReviewFile => ({
   path,
