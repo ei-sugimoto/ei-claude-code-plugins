@@ -431,6 +431,16 @@ export const buildTree = (files: readonly DiffReviewFile[], collapsed: readonly 
   return rows
 }
 
+// 変更ファイル一覧の幅 (枠線込み)。いちばん長い行が切れずに収まる幅にするが、差分側に DIFF_MIN_COLUMNS 列は残す
+export const SIDEBAR_MIN_WIDTH = 22
+export const DIFF_MIN_COLUMNS = 50
+
+export const sidebarWidth = (lines: readonly string[], columns: number): number => {
+  const longest = lines.reduce((max, line) => Math.max(max, displayWidth(line)), 0)
+  const limit = Math.max(SIDEBAR_MIN_WIDTH, Math.min(Math.floor(columns / 2), columns - DIFF_MIN_COLUMNS))
+  return Math.min(limit, Math.max(SIDEBAR_MIN_WIDTH, longest + 2))
+}
+
 export type UnifiedLine = {
   kind: DiffReviewCell['kind']
   oldNo: number | null

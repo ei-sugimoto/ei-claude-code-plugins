@@ -36,6 +36,7 @@ import {
   parseUnifiedDiff,
   revealGap,
   sanitize,
+  sidebarWidth,
   splitLines,
   toUnified,
   untrackedFile,
@@ -330,7 +331,20 @@ export const register: Register = on => {
     const generatedCount = (snap?.files ?? []).filter(f => f.isGenerated === true).length
     const columns = Math.max(40, e.props.bodyColumns)
     const hasSidebar = columns >= SIDEBAR_MIN_COLUMNS
-    const sideWidth = hasSidebar ? Math.min(44, Math.max(22, Math.floor(columns * 0.26))) : 0
+    const noteCount = new Map<string, number>()
+    for (const note of notes) noteCount.set(note.path, (noteCount.get(note.path) ?? 0) + 1)
+    const sidebarTitle = `変更ファイル (${files.length})`
+    const tree = buildTree(files, closedDirs).map(row => {
+      const indent = '  '.repeat(row.depth)
+      if (row.kind === 'dir') return { row, label: `${indent}${row.isCollapsed ? '+' : '-'} ${row.name}`, suffix: '', added: '', removed: '', mark: '', gen: '' }
+      const count = noteCount.get(row.path) ?? 0
+      const added = ` +${row.file.added}`
+      const removed = row.file.isUntracked ? ' new' : ` -${row.file.removed}`
+      const mark = count > 0 ? ` *${count}` : ''
+      const gen = row.file.isGenerated === true ? ' gen' : ''
+      return { row, label: `${indent}  ${row.name}`, suffix: added + removed + mark + gen, added, removed, mark, gen }
+    })
+    const sideWidth = hasSidebar ? sidebarWidth([sidebarTitle, ...tree.map(t => t.label + t.suffix)], columns) : 0
     const diffWidth = hasSidebar ? columns - sideWidth - 1 : columns
     const half = Math.floor((diffWidth - 1) / 2)
     const file = files.find(f => f.path === path) ?? null
@@ -619,23 +633,20 @@ export const register: Register = on => {
     const toggleDir = (dir: string) =>
       update($, collapsed, list => (list.includes(dir) ? list.filter(d => d !== dir) : [...list, dir]))
 
-    const sidebar = (files: readonly DiffReviewFile[]) => {
+    const sidebar = () => {
       // 枠線の左右2セルを除いた幅
       const inner = sideWidth - 2
-      const noteCount = new Map<string, number>()
-      for (const note of notes) noteCount.set(note.path, (noteCount.get(note.path) ?? 0) + 1)
       return (
         <Box flexDirection="column" width={sideWidth} borderStyle="round" borderDimColor>
           <Text bold>
-            {fillWidth(`変更ファイル (${files.length})`, inner)}
+            {fillWidth(sidebarTitle, inner)}
           </Text>
-          {buildTree(files, closedDirs).map(row => {
-            const indent = '  '.repeat(row.depth)
+          {tree.map(({ row, label, suffix, added, removed, mark, gen }) => {
             if (row.kind === 'dir') {
               return (
                 <Button
                   key={`dir-${row.path}`}
-                  label={fillWidth(`${indent}${row.isCollapsed ? '+' : '-'} ${row.name}`, inner)}
+                  label={fillWidth(label, inner)}
                   plain
                   dimColor
                   onPress={() => toggleDir(row.path)}
@@ -644,17 +655,12 @@ export const register: Register = on => {
             }
             const isCurrent = row.path === path
             const bg = isCurrent ? CURRENT_FILE_BG : undefined
-            const count = noteCount.get(row.path) ?? 0
-            const added = ` +${row.file.added}`
-            const removed = row.file.isUntracked ? ' new' : ` -${row.file.removed}`
-            const mark = count > 0 ? ` *${count}` : ''
-            const gen = row.file.isGenerated === true ? ' gen' : ''
-            const nameWidth = inner - displayWidth(added + removed + mark + gen)
+            const nameWidth = inner - displayWidth(suffix)
             return (
               <Box flexDirection="row" key={`file-row-${row.path}`} backgroundColor={bg}>
                 <Button
                   key={`file-${row.path}`}
-                  label={fillWidth(`${indent}  ${row.name}`, Math.max(4, nameWidth))}
+                  label={fillWidth(label, Math.max(4, nameWidth))}
                   plain
                   dimColor={!isCurrent}
                   onPress={() => selectFile(row.path)}
@@ -665,7 +671,7 @@ export const register: Register = on => {
                 <Text color={row.file.isUntracked ? 'cyan' : 'red'} backgroundColor={bg}>
                   {removed}
                 </Text>
-                {count > 0 && (
+                {mark !== '' && (
                   <Text color="yellow" backgroundColor={bg}>
                     {mark}
                   </Text>
@@ -783,7 +789,7 @@ export const register: Register = on => {
         )}
         {files.length > 0 && hasSidebar && (
           <Box flexDirection="row" gap={1}>
-            {sidebar(files)}
+            {sidebar()}
             {file !== null && diffColumn(file)}
           </Box>
         )}

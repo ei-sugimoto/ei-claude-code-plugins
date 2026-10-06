@@ -20,6 +20,7 @@ import {
   parseCommentInput,
   parseUnifiedDiff,
   revealGap,
+  sidebarWidth,
   toUnified,
   untrackedFile,
   wrapWidth,
@@ -157,6 +158,18 @@ test('変更ファイルをディレクトリの木に並べる', () => {
   expect(show(buildTree(files, []))).toEqual(['apps/', '  api/src/', '    a.ts', '    b.ts', '  web/', '    c.ts', 'README.md'])
   // 折りたたんだディレクトリの中は出さない
   expect(show(buildTree(files, ['apps/api/src']))).toEqual(['apps/', '  api/src/', '  web/', '    c.ts', 'README.md'])
+})
+
+test('変更ファイル一覧の幅を最も長い行に合わせる', () => {
+  // 短い行しかなければ最小幅
+  expect(sidebarWidth(['a.ts +1 -1'], 120)).toBe(22)
+  // 長い行が収まる幅 (枠線の2セル込み)
+  const long = 'very-long-file-name-for-sidebar.test.ts +12 -3'
+  expect(sidebarWidth(['a.ts', long], 160)).toBe(displayWidth(long) + 2)
+  // 差分側に 50 列、かつ全体の半分までしか広げない
+  expect(sidebarWidth(['x'.repeat(200)], 100)).toBe(50)
+  expect(sidebarWidth(['x'.repeat(200)], 90)).toBe(40)
+  expect(sidebarWidth(['x'.repeat(200)], 80)).toBe(30)
 })
 
 test('左右の対を unified の並びに戻す', () => {
