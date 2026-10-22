@@ -78,6 +78,8 @@ declare module 'claude-code' {
       view: DiffReviewView
       // 長い行をペイン幅で折り返すか
       isWrapped: boolean
+      // 変更ファイル一覧のサイドバーを出すか。隠すとファイルはプルダウンで選ぶ
+      isSidebarShown: boolean
       showGenerated: boolean
       // expansionKey(path, hunk の番号) ごとの展開状態
       expanded: Record<string, DiffReviewExpansion>

@@ -79,6 +79,10 @@ const VIEW_STORE_KEY = 'view'
 const wrapped = atom({ plugin: 'diff-review', key: 'isWrapped' } as const, true)
 const WRAP_STORE_KEY = 'isWrapped'
 
+// 横に置くペインはターミナル幅の 45% までしか広がらないので、サイドバーを隠して差分に全幅を回せるようにする。$.store にも残す
+const sidebarShown = atom({ plugin: 'diff-review', key: 'isSidebarShown' } as const, true)
+const SIDEBAR_STORE_KEY = 'isSidebarShown'
+
 // 折りたたんだディレクトリのパス
 const collapsed = atom({ plugin: 'diff-review', key: 'collapsed' } as const, [])
 
@@ -260,6 +264,12 @@ const toggleWrap = async ($: EngineInterface) => {
   await $.store.set(WRAP_STORE_KEY, isWrapped)
 }
 
+const toggleSidebar = async ($: EngineInterface) => {
+  const isShown = !(await read($, sidebarShown))
+  await update($, sidebarShown, () => isShown)
+  await $.store.set(SIDEBAR_STORE_KEY, isShown)
+}
+
 const newId = (): string => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 
 export const register: Register = on => {
@@ -267,12 +277,14 @@ export const register: Register = on => {
     await $.command.register({
       name: 'diff-review',
       description: 'git の差分をペインで開き、行コメントを Claude に渡す',
-      argumentHint: '[branch|uncommitted|base <branch>|split|unified|wrap|generated|close]',
+      argumentHint: '[branch|uncommitted|base <branch>|split|unified|wrap|sidebar|generated|close]',
     })
     const saved = await $.store.get(VIEW_STORE_KEY)
     if (saved === 'split' || saved === 'unified') await update($, view, () => saved)
     const savedWrap = await $.store.get(WRAP_STORE_KEY)
     if (typeof savedWrap === 'boolean') await update($, wrapped, () => savedWrap)
+    const savedSidebar = await $.store.get(SIDEBAR_STORE_KEY)
+    if (typeof savedSidebar === 'boolean') await update($, sidebarShown, () => savedSidebar)
     // ホットリロードでも session.start が走る。開いたままのペインを新しいコードで描き直す
     $.ui.invalidate('ui.render')
     return next(e)
@@ -293,6 +305,7 @@ export const register: Register = on => {
     if (baseArg !== null) await setBaseBranch($, baseArg[1] ?? null)
     if (arg === 'split' || arg === 'unified') await setView($, arg)
     if (arg === 'wrap') await toggleWrap($)
+    if (arg === 'sidebar') await toggleSidebar($)
     if (arg === 'generated') await update($, showGenerated, isShown => !isShown)
 
     const opened = await $.ui.open({ id: PANE, title: 'diff review', focus: true, columns: WANTED_COLUMNS })
@@ -330,7 +343,9 @@ export const register: Register = on => {
     const files = visibleFiles(snap?.files ?? [], isGeneratedShown)
     const generatedCount = (snap?.files ?? []).filter(f => f.isGenerated === true).length
     const columns = Math.max(40, e.props.bodyColumns)
-    const hasSidebar = columns >= SIDEBAR_MIN_COLUMNS
+    const isWideEnough = columns >= SIDEBAR_MIN_COLUMNS
+    const isSidebarShown = await read($, sidebarShown)
+    const hasSidebar = isWideEnough && isSidebarShown
     const noteCount = new Map<string, number>()
     for (const note of notes) noteCount.set(note.path, (noteCount.get(note.path) ?? 0) + 1)
     const sidebarTitle = `変更ファイル (${files.length})`
@@ -748,6 +763,9 @@ export const register: Register = on => {
           <Button key="view-split" label="split" hotkey="p" variant={shape === 'split' ? 'primary' : undefined} onPress={() => setView($, 'split')} />
           <Button key="view-unified" label="unified" hotkey="n" variant={shape === 'unified' ? 'primary' : undefined} onPress={() => setView($, 'unified')} />
           <Button key="wrap" label="折り返し" hotkey="w" variant={isWrapped ? 'primary' : undefined} onPress={() => toggleWrap($)} />
+          {isWideEnough && (
+            <Button key="sidebar" label="ファイル一覧" hotkey="f" variant={isSidebarShown ? 'primary' : undefined} onPress={() => toggleSidebar($)} />
+          )}
           {generatedCount > 0 && <Text dimColor>|</Text>}
           {generatedCount > 0 && (
             <Button

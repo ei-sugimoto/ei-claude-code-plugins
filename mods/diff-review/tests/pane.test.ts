@@ -369,3 +369,31 @@ test('長い行をペイン幅で折り返し、w で切り詰めに戻す', asy
     await ui.unmount()
   }
 })
+
+test('f でサイドバーを隠し、ファイルはプルダウンで選ぶ', async ($, on) => {
+  mock.store(on)
+  on('process.run', (_, e) => ({ value: fakeGit(e.argv) }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  await $.command.run({
+    command: 'diff-review',
+    args: '',
+    origin: { kind: 'composer' },
+    presentation: { isFullscreen: true, columns: 200 },
+  })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ key: 'dir-src' })).toBeDefined()
+  expect(await ui.find({ key: 'file' })).toBeUndefined()
+
+  await ui.press({ key: 'sidebar' })
+  expect(await ui.find({ key: 'dir-src' })).toBeUndefined()
+  expect(await ui.find({ key: 'file' })).toBeDefined()
+
+  await ui.press({ key: 'sidebar' })
+  expect(await ui.find({ key: 'dir-src' })).toBeDefined()
+  await ui.unmount()
+
+  // 狭いペインではもともとサイドバーがないので、切り替えボタンも出さない
+  const narrow = await $.ui.mount({ ...PANE, surface: 'terminal', props: { ...PANE.props, bodyColumns: 70 } })
+  expect(await narrow.find({ key: 'sidebar' })).toBeUndefined()
+  await narrow.unmount()
+})
